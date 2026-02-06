@@ -1,0 +1,107 @@
+/* SteinLine DAW Aesthetic - High Fidelity */
+
+QMainWindow {
+    background-color: #0f1115;
+}
+
+QWidget {
+    color: #adbac7;
+    font-family: 'Segoe UI', 'Inter', sans-serif;
+}
+
+/* TOP BAR */
+QFrame#TopBar {
+    background-color: #1c2128;
+    border-bottom: 1px solid #444c56;
+}
+
+QLabel#AppTitle {
+    color: #539bf5;
+    font-weight: bold;
+    font-size: 13px;
+    letter-spacing: 1px;
+}
+
+/* SIDE NAVIGATION */
+QFrame#Sidebar {
+    background-color: #1c2128;
+    border-right: 1px solid #444c56;
+}
+
+QPushButton#NavBtn {
+    background-color: transparent;
+    color: #768390;
+    border: none;
+    text-align: left;
+    padding: 12px 20px;
+    font-size: 13px;
+    border-radius: 0px;
+    margin: 0px;
+}
+
+QPushButton#NavBtn:hover {
+    background-color: #22272e;
+    color: #adbac7;
+}
+
+QPushButton#NavBtn:checked {
+    background-color: #2d333b;
+    color: #539bf5;
+    border-left: 3px solid #539bf5;
+}
+
+/* CARDS & PAGES */
+QScrollArea {
+    border: none;
+    background-color: transparent;
+}
+
+QGroupBox {
+    border: 1px solid #444c56;
+    border-radius: 6px;
+    margin-top: 20px;
+    padding-top: 20px;
+    font-weight: bold;
+    color: #539bf5;
+}
+
+/* FORM ELEMENTS */
+QLineEdit, QDoubleSpinBox, QSpinBox {
+    background-color: #0d1117;
+    border: 1px solid #444c56;
+    padding: 8px;
+    border-radius: 4px;
+    color: #adbac7;
+}
+
+QLineEdit:focus {
+    border: 1px solid #539bf5;
+}
+
+/* CONSOLE */
+QFrame#ConsoleWrapper {
+    background-color: #0d1117;
+    border-top: 1px solid #444c56;
+}
+
+QPlainTextEdit#Console {
+    background-color: #0d1117;
+    border: none;
+    color: #768390;
+    font-family: 'Consolas', monospace;
+    font-size: 11px;
+}
+
+/* BUTTONS */
+QPushButton#PrimaryAction {
+    background-color: #347d39;
+    color: white;
+    font-weight: bold;
+    padding: 10px;
+    border-radius: 5px;
+    border: 1px solid rgba(240,246,252,0.1);
+}
+
+QPushButton#PrimaryAction:hover {
+    background-color: #46954a;
+}
