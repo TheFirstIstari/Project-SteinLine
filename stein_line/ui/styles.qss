@@ -9,6 +9,67 @@ QWidget {
     font-family: 'Segoe UI', 'Inter', sans-serif;
 }
 
+QWidget#PageContainer {
+    background-color: #1c2128;
+}
+
+QFrame#ConsoleWrapper {
+    background-color: #0d1117;
+    border-top: 1px solid #444c56;
+}
+
+QTabWidget::pane {
+    border: none;
+    background-color: #1c2128;
+}
+
+QTabBar::tab {
+    background: #0d1117;
+    color: #768390;
+    padding: 10px 20px;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    margin-right: 2px;
+}
+
+QTabBar::tab:selected {
+    background: #1c2128;
+    color: #539bf5;
+    font-weight: bold;
+}
+
+QGroupBox {
+    border: 1px solid #444c56;
+    border-radius: 6px;
+    margin-top: 20px;
+    padding-top: 15px;
+    font-weight: bold;
+    color: #539bf5;
+}
+
+QLineEdit, QDoubleSpinBox, QSpinBox {
+    background-color: #0d1117;
+    border: 1px solid #444c56;
+    padding: 8px;
+    border-radius: 4px;
+    color: #adbac7;
+}
+
+QPushButton#PrimaryAction {
+    background-color: #347d39;
+    color: white;
+    font-weight: bold;
+    border-radius: 5px;
+    padding: 10px;
+}
+
+QPlainTextEdit#Console {
+    background-color: #0d1117;
+    color: #00ff41;
+    font-family: 'Consolas', monospace;
+    border: none;
+}
+
 /* TOP BAR */
 QFrame#TopBar {
     background-color: #1c2128;

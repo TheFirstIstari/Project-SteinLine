@@ -14,12 +14,16 @@ def main():
             app.setStyleSheet(f.read())
 
     # Initialize Config
-    config = ProjectConfig()
+    config = ProjectConfig.load("last_project.json")
     config.auto_tune() # Auto-detect hardware on startup
 
     # Initialize Window
     window = MainWindow(config)
     window.show()
+
+    # Log the auto-restoration
+    if config.source_root:
+        window.console.append_log("SESSION_RESTORED: Previous project paths loaded.")
 
     sys.exit(app.exec())
 

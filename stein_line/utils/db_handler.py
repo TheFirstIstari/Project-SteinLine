@@ -3,34 +3,36 @@ import os
 from pathlib import Path
 
 class SteinLineDB:
-    """Manages forensic databases with hardware-aware locking protocols."""
+    """Manages forensic databases with configuration-aware locking."""
     
-    def __init__(self, registry_path: str, intelligence_path: str):
-        self.reg_path = registry_path
-        self.intel_path = intelligence_path
+    def __init__(self, config):
+        """Initialize using the unified ProjectConfig object."""
+        self.config = config
+        self.reg_path = config.registry_db_path
+        self.intel_path = config.intelligence_db_path
         self._initialize_schema()
 
-    def _get_connection(self, db_path: str):
+    def get_connection(self, db_path: str):
         """Returns a connection optimized for the storage medium (Local vs Pi)."""
-        # CIFS/SMB detection: Network paths often contain /mnt/ or \\
+        # CIFS/SMB detection
         is_network = "/mnt/" in db_path or db_path.startswith("\\\\")
         
         conn = sqlite3.connect(db_path, timeout=60)
         
         if is_network:
-            # Network shares do not support WAL reliably
+            # Network shares MUST use DELETE mode for stability
             conn.execute("PRAGMA journal_mode=DELETE")
         else:
-            # Local SSDs perform significantly better with WAL
+            # Local SSDs use WAL for maximum speed
             conn.execute("PRAGMA journal_mode=WAL")
             
         conn.execute("PRAGMA synchronous=NORMAL")
         return conn
 
     def _initialize_schema(self):
-        """Enforce Forensic Data Hierarchy across both nodes."""
-        # Registry: Fingerprint (SHA-256) is the Unique Primary Key
-        with self._get_connection(self.reg_path) as conn:
+        """Ensure the forensic tables exist on both storage nodes."""
+        # Setup Registry
+        with self.get_connection(self.reg_path) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS registry (
                     fingerprint TEXT PRIMARY KEY,
@@ -40,8 +42,8 @@ class SteinLineDB:
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_fp ON registry(fingerprint)")
 
-        # Intelligence: Every fact is anchored to a source fingerprint
-        with self._get_connection(self.intel_path) as conn:
+        # Setup Intelligence
+        with self.get_connection(self.intel_path) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS intelligence (
                     fingerprint TEXT,
@@ -55,14 +57,3 @@ class SteinLineDB:
                     PRIMARY KEY (fingerprint, filename, evidence_quote)
                 )
             """)
-
-    def fetch_unprocessed(self, limit: int):
-        """Retrieve files found in registry but missing from results."""
-        # Note: Optimization for large sets involves Python-side diffing
-        # to avoid network-intensive ATTACH DATABASE commands.
-        with self._get_connection(self.reg_path) as conn:
-            cursor = conn.execute(
-                "SELECT fingerprint, path FROM registry LIMIT ?", 
-                (limit,)
-            )
-            return cursor.fetchall()

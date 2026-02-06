@@ -36,3 +36,8 @@ class HardwareProbe:
             logging.warning(f"NVML Probing failed: {e}")
         
         return info
+    
+    @staticmethod
+    def get_total_ram_gb() -> float:
+        """Returns total physical memory in GB."""
+        return psutil.virtual_memory().total / (1024**3)

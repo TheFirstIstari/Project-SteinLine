@@ -1,6 +1,7 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QFormLayout, QLineEdit, 
                              QPushButton, QFileDialog, QDoubleSpinBox, QSpinBox, 
                              QGroupBox, QHBoxLayout, QLabel)
+from PySide6.QtCore import Qt
 
 class SettingsPage(QWidget):
     def __init__(self, config, on_apply_callback):
@@ -11,66 +12,74 @@ class SettingsPage(QWidget):
 
     def init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(30, 30, 30, 30)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(20)
 
-        # 1. PATHS
-        path_group = QGroupBox("ENVIRONMENT_PATHS")
+        header = QLabel("PROJECT_ENVIRONMENT_SETTINGS")
+        header.setStyleSheet("font-size: 20px; font-weight: bold; color: white;")
+        layout.addWidget(header)
+
+        path_group = QGroupBox("Environment Paths")
         path_form = QFormLayout(path_group)
-        
+        path_form.setContentsMargins(20, 20, 20, 20)
+        path_form.setSpacing(15)
+
+        self.name_edit = QLineEdit(self.config.project_name)
+        path_form.addRow("Project Name:", self.name_edit)
+
         self.source_edit = QLineEdit(self.config.source_root)
-        source_btn = QPushButton("Browse")
-        source_btn.clicked.connect(self._select_source)
-        
-        source_row = QHBoxLayout()
-        source_row.addWidget(self.source_edit)
-        source_row.addWidget(source_btn)
+        src_btn = QPushButton("Browse")
+        src_btn.clicked.connect(self._select_source)
+        source_row = QHBoxLayout(); source_row.addWidget(self.source_edit); source_row.addWidget(src_btn)
         path_form.addRow("Evidence Root:", source_row)
-        
+
         self.reg_edit = QLineEdit(self.config.registry_db_path)
         path_form.addRow("Registry DB:", self.reg_edit)
-        
+
         self.intel_edit = QLineEdit(self.config.intelligence_db_path)
         path_form.addRow("Intelligence DB:", self.intel_edit)
         layout.addWidget(path_group)
 
-        # 2. HARDWARE CONTROLS (The missing part)
-        hw_group = QGroupBox("HARDWARE_RESOURCE_CONTROL")
-        hw_form = QFormLayout(hw_group)
+        perf_group = QGroupBox("Resource Tuning")
+        perf_form = QFormLayout(perf_group)
+        self.vram_spin = QDoubleSpinBox(); self.vram_spin.setRange(0.1, 0.95); self.vram_spin.setValue(self.config.vram_allocation)
+        perf_form.addRow("vLLM VRAM Cap:", self.vram_spin)
+        self.thread_spin = QSpinBox(); self.thread_spin.setRange(1, 64); self.thread_spin.setValue(self.config.cpu_workers)
+        perf_form.addRow("CPU Workers:", self.thread_spin)
+        layout.addWidget(perf_group)
 
-        self.vram_ctrl = QDoubleSpinBox()
-        self.vram_ctrl.setRange(0.1, 0.95)
-        self.vram_ctrl.setSingleStep(0.05)
-        self.vram_ctrl.setValue(self.config.vram_allocation)
-        hw_form.addRow("GPU VRAM Limit:", self.vram_ctrl)
-
-        self.thread_ctrl = QSpinBox()
-        self.thread_ctrl.setRange(1, 64)
-        self.thread_ctrl.setValue(self.config.cpu_workers)
-        hw_form.addRow("CPU Worker Threads:", self.thread_ctrl)
-
-        layout.addWidget(hw_group)
         layout.addStretch()
 
-        # 3. APPLY
-        self.apply_btn = QPushButton("Initialize Project Environment")
+        self.apply_btn = QPushButton("Initialize Forensic Session")
         self.apply_btn.setObjectName("PrimaryAction")
         self.apply_btn.setFixedHeight(45)
         self.apply_btn.clicked.connect(self._apply)
         layout.addWidget(self.apply_btn)
 
+    def update_ui_fields(self):
+        """Update the visible text fields from the internal config object."""
+        self.name_edit.setText(self.config.project_name)
+        self.source_edit.setText(self.config.source_root)
+        self.reg_edit.setText(self.config.registry_db_path)
+        self.intel_edit.setText(self.config.intelligence_db_path)
+        self.vram_spin.setValue(self.config.vram_allocation)
+        self.thread_spin.setValue(self.config.cpu_workers)
+
     def _select_source(self):
-        p = QFileDialog.getExistingDirectory(self, "Select Source")
-        if p: self.source_edit.setText(p)
+        path = QFileDialog.getExistingDirectory(self, "Select Root")
+        if path: self.source_edit.setText(path)
 
     def _apply(self):
-        # Write UI values back to the config object
+        self.config.project_name = self.name_edit.text()
         self.config.source_root = self.source_edit.text()
         self.config.registry_db_path = self.reg_edit.text()
         self.config.intelligence_db_path = self.intel_edit.text()
-        self.config.vram_allocation = self.vram_ctrl.value()
-        self.config.cpu_workers = self.thread_ctrl.value()
+        self.config.vram_allocation = self.vram_spin.value()
+        self.config.cpu_workers = self.thread_spin.value()
         
         if self.config.validate():
+            # Automatically save as the 'last_project' for next startup
+            self.config.save("last_project.json")
             self.on_apply("READY")
         else:
-            self.on_apply("ERROR: Invalid Paths")
+            self.on_apply("ERROR: Validation failed.")
