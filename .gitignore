@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# Project Specific Data
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+last_project.json
+
+# Model weights (Local downloads)
+models/
+.cache/
+
+# OS specific
+.DS_Store
+Thumbs.db
