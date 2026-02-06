@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, 
-                             QDockWidget, QLabel, QMenuBar, QMenu, QTabWidget)
+                             QDockWidget, QLabel, QMenuBar, QMenu,QHBoxLayout, QSplitter,QTabWidget)
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 
@@ -42,22 +42,20 @@ class MainWindow(QMainWindow):
         self.tabifyDockWidget(self.setup_dock, self.analysis_dock)
         self.addDockWidget(Qt.BottomDockWidgetArea, self.console_dock)
 
-    def init_menu_bar(self):
-        menubar = self.menuBar()
+    def init_top_bar(self):
+        layout = QHBoxLayout(self.top_bar)
+        layout.setContentsMargins(20, 0, 20, 0)
         
-        # File Menu
-        file_menu = menubar.addMenu("File")
-        exit_app = QAction("Exit", self)
-        exit_app.triggered.connect(self.close)
-        file_menu.addAction(exit_app)
-
-        # View Menu - STORE REFERENCE for create_dock to use
-        self.view_menu = menubar.addMenu("View")
+        title = QLabel("STEINLINE // NATIVE WORKSTATION")
+        title.setObjectName("AppTitle")
+        layout.addWidget(title)
         
-        # Analysis Menu
-        analysis_menu = menubar.addMenu("Analysis")
-        run_hashing = QAction("Run File Hashing", self)
-        analysis_menu.addAction(run_hashing)
+        layout.addStretch()
+        
+        # DEFINING THE STATUS LABEL CLEARLY
+        self.status_label = QLabel("SYSTEM_READY")
+        self.status_label.setStyleSheet("color: #3fb950; font-family: monospace; font-size: 10px;")
+        layout.addWidget(self.status_label)
 
     def create_dock(self, title, widget):
         """Standardizes dock creation and adds toggle to View menu."""
@@ -69,5 +67,16 @@ class MainWindow(QMainWindow):
         self.view_menu.addAction(dock.toggleViewAction())
         return dock
 
-    def on_config_applied(self):
-        self.console.append_log(f"Configuration verified: {self.config.project_name}")
+    def on_config_applied(self, status):
+        """Handle project initialization status from the settings page."""
+        self.console.append_log(f"INIT_COMMAND_RECEIVED: {status}")
+        
+        if "READY" in status:
+            self.console.append_log(f"Project Logic Initialized: {self.config.project_name}")
+            # Use the correct variable name here
+            self.status_label.setText("CONFIGURATION_SET")
+            self.status_label.setStyleSheet("color: #539bf5; font-family: monospace; font-size: 10px;")
+        else:
+            self.console.append_log(f"CONFIGURATION_FAILED: {status}")
+            self.status_label.setText("CONFIG_ERROR")
+            self.status_label.setStyleSheet("color: #f85149; font-family: monospace; font-size: 10px;")
