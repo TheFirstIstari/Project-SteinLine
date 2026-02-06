@@ -105,3 +105,65 @@ QPushButton#PrimaryAction {
 QPushButton#PrimaryAction:hover {
     background-color: #46954a;
 }
+/* SteinLine Modern UI - Docking Version */
+
+QMainWindow {
+    background-color: #0f1115;
+}
+
+/* MENU BAR */
+QMenuBar {
+    background-color: #1c2128;
+    border-bottom: 1px solid #444c56;
+    padding: 2px;
+}
+
+QMenuBar::item {
+    padding: 5px 12px;
+    background: transparent;
+    border-radius: 4px;
+}
+
+QMenuBar::item:selected {
+    background: #2d333b;
+    color: #539bf5;
+}
+
+QMenu {
+    background-color: #1c2128;
+    border: 1px solid #444c56;
+}
+
+QMenu::item:selected {
+    background-color: #2d333b;
+    color: #539bf5;
+}
+
+/* DOCK WIDGETS */
+QDockWidget {
+    titlebar-close-icon: none;
+    titlebar-normal-icon: none;
+    font-weight: bold;
+    color: #768390;
+}
+
+QDockWidget::title {
+    background-color: #1c2128;
+    text-align: left;
+    padding: 8px;
+    border-bottom: 1px solid #444c56;
+}
+
+/* TABS (For stacked docks) */
+QTabBar::tab {
+    background: #0d1117;
+    padding: 8px 20px;
+    border-right: 1px solid #1c2128;
+    color: #768390;
+}
+
+QTabBar::tab:selected {
+    background: #1c2128;
+    color: #539bf5;
+    border-bottom: 2px solid #539bf5;
+}

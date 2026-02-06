@@ -1,4 +1,5 @@
 import json
+import os
 from dataclasses import dataclass, asdict
 from .hardware_probe import HardwareProbe
 
@@ -19,15 +20,21 @@ class ProjectConfig:
     use_gpu_ocr: bool = False
     use_gpu_whisper: bool = False
 
-    def validate(self) -> tuple[bool, str]:
+    is_ready: bool = False
+
+    def validate(self) -> bool:
         """Verify that all paths are set and accessible."""
-        if not self.source_root or not os.path.exists(self.source_root):
-            return False, "Invalid source data root."
-        if not self.registry_db_path:
-            return False, "Registry database path not set."
-        if not self.intelligence_db_path:
-            return False, "Intelligence database path not set."
-        return True, "Valid"
+        # Clean paths (remove trailing spaces if any)
+        self.source_root = self.source_root.strip()
+        self.registry_db_path = self.registry_db_path.strip()
+        self.intelligence_db_path = self.intelligence_db_path.strip()
+
+        if self.source_root and os.path.exists(self.source_root) and self.registry_db_path and self.intelligence_db_path:
+            self.is_ready = True  # CRITICAL: This unlocks the Analysis Engine buttons
+            return True
+            
+        self.is_ready = False
+        return False
 
     def auto_tune(self):
         """Automatically set optimal defaults based on host hardware."""
