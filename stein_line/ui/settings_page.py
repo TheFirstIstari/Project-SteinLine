@@ -1,103 +1,65 @@
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, 
-                             QPushButton, QFileDialog, QFormLayout, QDoubleSpinBox, 
-                             QSpinBox, QCheckBox, QLabel, QGroupBox)
-from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QFormLayout, QLineEdit, 
+                             QPushButton, QFileDialog, QDoubleSpinBox, QSpinBox, 
+                             QGroupBox, QHBoxLayout, QLabel)
 
 class SettingsPage(QWidget):
-    """Configuration screen for project paths and hardware limits."""
-
-    def __init__(self, config):
+    def __init__(self, config, on_apply):
         super().__init__()
         self.config = config
+        self.on_apply = on_apply
         self.init_ui()
 
     def init_ui(self):
-        layout = QVBoxLayout(self)
+        # Using a main layout with margins for that "MuseScore" airy feel
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(40, 40, 40, 40)
+        self.main_layout.setSpacing(20)
 
-        # 1. Path Configuration Group
-        path_group = QGroupBox("Project Environment")
-        path_form = QFormLayout(path_group)
+        header = QLabel("PROJECT SETTINGS")
+        header.setStyleSheet("font-size: 20px; font-weight: bold; color: white;")
+        self.main_layout.addWidget(header)
+
+        form_group = QGroupBox("Environment Paths")
+        form = QFormLayout(form_group)
+        form.setContentsMargins(20, 20, 20, 20)
+        form.setSpacing(15)
 
         self.name_edit = QLineEdit(self.config.project_name)
-        path_form.addRow("Investigation Name:", self.name_edit)
+        form.addRow("Project Name:", self.name_edit)
 
-        # Source Root Selector
+        # Source Browse
         self.source_edit = QLineEdit(self.config.source_root)
-        source_btn = QPushButton("Browse")
-        source_btn.clicked.connect(self._select_source)
-        source_row = QHBoxLayout()
-        source_row.addWidget(self.source_edit)
-        source_row.addWidget(source_btn)
-        path_form.addRow("Evidence Root (VOL Folders):", source_row)
+        src_btn = QPushButton("Browse")
+        src_btn.clicked.connect(self._browse_src)
+        src_row = QHBoxLayout()
+        src_row.addWidget(self.source_edit)
+        src_row.addWidget(src_btn)
+        form.addRow("Evidence Root:", src_row)
 
-        # Registry DB Selector
-        self.registry_edit = QLineEdit(self.config.registry_db_path)
-        reg_btn = QPushButton("Select File")
-        reg_btn.clicked.connect(self._select_registry)
-        reg_row = QHBoxLayout()
-        reg_row.addWidget(self.registry_edit)
-        reg_row.addWidget(reg_btn)
-        path_form.addRow("Local Registry DB:", reg_row)
+        self.reg_edit = QLineEdit(self.config.registry_db_path)
+        form.addRow("Registry DB:", self.reg_edit)
 
-        # Intelligence DB Selector
         self.intel_edit = QLineEdit(self.config.intelligence_db_path)
-        intel_btn = QPushButton("Select File")
-        intel_btn.clicked.connect(self._select_intel)
-        intel_row = QHBoxLayout()
-        intel_row.addWidget(self.intel_edit)
-        intel_row.addWidget(intel_btn)
-        path_form.addRow("Intelligence DB (Pi/Remote):", intel_row)
+        form.addRow("Intelligence DB:", self.intel_edit)
+        
+        self.main_layout.addWidget(form_group)
 
-        layout.addWidget(path_group)
+        # Push the button to the bottom
+        self.main_layout.addStretch()
 
-        # 2. Hardware Allocation Group
-        hw_group = QGroupBox("Computational Resource Allocation")
-        hw_form = QFormLayout(hw_group)
+        self.apply_btn = QPushButton("Initialize Project Environment")
+        self.apply_btn.setObjectName("PrimaryAction")
+        self.apply_btn.setFixedHeight(40)
+        self.apply_btn.clicked.connect(self._apply)
+        self.main_layout.addWidget(self.apply_btn)
 
-        self.vram_spin = QDoubleSpinBox()
-        self.vram_spin.setRange(0.1, 0.9)
-        self.vram_spin.setSingleStep(0.05)
-        self.vram_spin.setValue(self.config.vram_allocation)
-        hw_form.addRow("GPU VRAM Utilization Cap:", self.vram_spin)
-
-        self.worker_spin = QSpinBox()
-        self.worker_spin.setRange(1, 64)
-        self.worker_spin.setValue(self.config.cpu_workers)
-        hw_form.addRow("Concurrent CPU Workers:", self.worker_spin)
-
-        self.gpu_ocr_check = QCheckBox("Enable GPU OCR (Accelerated)")
-        self.gpu_ocr_check.setChecked(self.config.use_gpu_ocr)
-        hw_form.addRow(self.gpu_ocr_check)
-
-        layout.addWidget(hw_group)
-        layout.addStretch()
-
-        # Save Button
-        save_btn = QPushButton("Apply and Initialize Project")
-        save_btn.setFixedHeight(40)
-        save_btn.setStyleSheet("background-color: #00ff41; color: black; font-weight: bold;")
-        save_btn.clicked.connect(self._apply_settings)
-        layout.addWidget(save_btn)
-
-    def _select_source(self):
-        path = QFileDialog.getExistingDirectory(self, "Select Evidence Root Folder")
+    def _browse_src(self):
+        path = QFileDialog.getExistingDirectory(self, "Select Root")
         if path: self.source_edit.setText(path)
 
-    def _select_registry(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Select Registry DB Location", "", "SQLite DB (*.db)")
-        if path: self.registry_edit.setText(path)
-
-    def _select_intel(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Select Intelligence DB Location", "", "SQLite DB (*.db)")
-        if path: self.intel_edit.setText(path)
-
-    def _apply_settings(self):
-        """Update the config object from the UI values."""
+    def _apply(self):
         self.config.project_name = self.name_edit.text()
         self.config.source_root = self.source_edit.text()
-        self.config.registry_db_path = self.registry_edit.text()
+        self.config.registry_db_path = self.reg_edit.text()
         self.config.intelligence_db_path = self.intel_edit.text()
-        self.config.vram_allocation = self.vram_spin.value()
-        self.config.cpu_workers = self.worker_spin.value()
-        self.config.use_gpu_ocr = self.gpu_ocr_check.isChecked()
-        print("Settings Applied.")
+        if self.on_apply: self.on_apply()
