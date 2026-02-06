@@ -3,6 +3,7 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                              QButtonGroup, QSplitter)
 from PySide6.QtCore import Qt
 from .settings_page import SettingsPage
+from .analysis_page import AnalysisPage # Ensure this import is here
 from .log_console import LogConsole
 
 class MainWindow(QMainWindow):
@@ -19,17 +20,20 @@ class MainWindow(QMainWindow):
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(0)
 
-        # 1. Top Bar
+        # 1. Initialize the Console FIRST (So other pages can use it)
+        self.console = LogConsole()
+
+        # 2. Top Bar
         self.top_bar = QFrame()
         self.top_bar.setObjectName("TopBar")
         self.top_bar.setFixedHeight(45)
         self.init_top_bar()
         self.layout.addWidget(self.top_bar)
 
-        # 2. Workspace Splitter (Content vs Console)
+        # 3. Workspace Splitter (Content vs Console)
         self.v_splitter = QSplitter(Qt.Vertical)
         
-        # Horizontal Splitter (Sidebar vs Content)
+        # Horizontal container for Sidebar + Content
         self.h_container = QWidget()
         self.h_layout = QHBoxLayout(self.h_container)
         self.h_layout.setContentsMargins(0, 0, 0, 0)
@@ -41,27 +45,26 @@ class MainWindow(QMainWindow):
         self.sidebar.setFixedWidth(200)
         self.init_sidebar()
         
-        # Content
+        # Content Stack - Initialize pages now that console exists
         self.content_stack = QStackedWidget()
         self.settings_page = SettingsPage(self.config, self.on_config_applied)
-        self.content_stack.addWidget(self.settings_page)
+        self.analysis_page = AnalysisPage(self.config, self.console) 
         
-        # Default Page Stubs
-        self.content_stack.addWidget(QLabel("ANALYSIS_ENGINE_STUB"))
+        self.content_stack.addWidget(self.settings_page)
+        self.content_stack.addWidget(self.analysis_page)
         self.content_stack.addWidget(QLabel("FORENSIC_BOARD_STUB"))
 
         self.h_layout.addWidget(self.sidebar)
         self.h_layout.addWidget(self.content_stack)
 
-        # 3. Console Wrapper
+        # 4. Console Wrapper (Visual housing for the console)
         self.console_wrapper = QFrame()
         self.console_wrapper.setObjectName("ConsoleWrapper")
         self.console_layout = QVBoxLayout(self.console_wrapper)
         self.console_layout.setContentsMargins(10, 5, 10, 5)
-        self.console = LogConsole()
         self.console_layout.addWidget(self.console)
 
-        # Add to Splitter
+        # Add components to the vertical splitter
         self.v_splitter.addWidget(self.h_container)
         self.v_splitter.addWidget(self.console_wrapper)
         self.v_splitter.setStretchFactor(0, 4)
