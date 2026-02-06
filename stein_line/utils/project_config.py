@@ -6,8 +6,9 @@ from .hardware_probe import HardwareProbe
 class ProjectConfig:
     project_name: str = "New Investigation"
     source_root: str = ""
-    registry_db_path: str = "working_node.db"
-    intelligence_db_path: str = "stein_intelligence.db"
+    registry_db_path: str = ""
+    intelligence_db_path: str = ""
+
     
     # Auto-tuned fields
     vram_allocation: float = 0.0
@@ -17,6 +18,16 @@ class ProjectConfig:
     
     use_gpu_ocr: bool = False
     use_gpu_whisper: bool = False
+
+    def validate(self) -> tuple[bool, str]:
+        """Verify that all paths are set and accessible."""
+        if not self.source_root or not os.path.exists(self.source_root):
+            return False, "Invalid source data root."
+        if not self.registry_db_path:
+            return False, "Registry database path not set."
+        if not self.intelligence_db_path:
+            return False, "Intelligence database path not set."
+        return True, "Valid"
 
     def auto_tune(self):
         """Automatically set optimal defaults based on host hardware."""
