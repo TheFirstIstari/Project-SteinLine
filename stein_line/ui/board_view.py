@@ -31,6 +31,36 @@ class BoardView(QGraphicsView):
         self.setBackgroundBrush(QBrush(QColor("#0d1117")))
         self.day_stacks = {}
 
+    def _safe_emit(self, message: str):
+        """Emit `sig_node_selected` if possible; fallback to app console or stderr.
+
+        Some runtime environments (threading, plugin import issues) can leave
+        the signal object in an unexpected state. Use a safe emitter to avoid
+        crashing the UI when emitting from background threads.
+        """
+        # Preferred: try normal Qt signal emit and catch any attribute errors
+        try:
+            self.sig_node_selected.emit(message)
+            return
+        except Exception:
+            pass
+
+        # Fallback: try to reach the main window console if available
+        try:
+            win = self.window()
+            if hasattr(win, 'console') and hasattr(win.console, 'append_log'):
+                win.console.append_log(message)
+                return
+        except Exception:
+            pass
+
+        # Last resort: print to stderr to preserve information
+        try:
+            import sys
+            sys.stderr.write(f"{message}\n")
+        except Exception:
+            pass
+
     def _safe_int(self, val):
         try:
             if val is None or str(val) == 'None': return 1
@@ -50,7 +80,7 @@ class BoardView(QGraphicsView):
             conn.close()
             self.stream_facts(facts)
         except Exception as e:
-            self.sig_node_selected.emit(f"BOARD_LOAD_ERROR: {str(e)}")
+            self._safe_emit(f"BOARD_LOAD_ERROR: {str(e)}")
         
         # Re-enable indexing after load
         self.scene.setItemIndexMethod(QGraphicsScene.BspTreeIndex)
@@ -87,7 +117,7 @@ class BoardView(QGraphicsView):
     def on_node_clicked(self, fingerprint):
         fp_str = str(fingerprint)
         # Emit to MainWindow Console
-        self.sig_node_selected.emit(f"PULSE: {fp_str[:12]}...")
+        self._safe_emit(f"PULSE: {fp_str[:12]}...")
         
         # Fast update of highlights
         for item in self.scene.items():

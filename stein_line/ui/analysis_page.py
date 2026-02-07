@@ -133,7 +133,15 @@ class AnalysisPage(QWidget):
         self.inf_worker.stats_signal.connect(self._update_inf_progress)
         self.inf_worker.finished_signal.connect(self._inf_finished)
         
-        self.engine_started_signal.emit(self.inf_worker)
+        try:
+            from ..utils.signals import safe_emit
+            safe_emit(self.engine_started_signal, self.inf_worker)
+        except Exception:
+            try:
+                import sys
+                sys.stderr.write(f"ENGINE_STARTED: {self.inf_worker}\n")
+            except Exception:
+                pass
         self.inf_worker.start()
 
     def pause_inf(self):

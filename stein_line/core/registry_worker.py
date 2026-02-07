@@ -51,7 +51,7 @@ class RegistryWorker(QThread):
             return (None, path_str)
 
     def run(self):
-        self.status_signal.emit("Initializing Registry Scan...")
+        self._emit(self.status_signal, "Initializing Registry Scan...")
 
         
         
@@ -61,9 +61,9 @@ class RegistryWorker(QThread):
             with self.db.get_connection(self.config.registry_db_path) as conn:
                 cursor = conn.execute("SELECT path FROM registry")
                 existing = {row[0] for row in cursor}
-            self.status_signal.emit(f"RAM_CACHE_LOADED: {len(existing)} files known.")
+            self._emit(self.status_signal, f"RAM_CACHE_LOADED: {len(existing)} files known.")
         except Exception as e:
-            self.status_signal.emit(f"CACHE_ERROR: {e}")
+            self._emit(self.status_signal, f"CACHE_ERROR: {e}")
 
         # 2. Discover new files
         new_files = []
@@ -74,13 +74,13 @@ class RegistryWorker(QThread):
                 if p not in existing:
                     new_files.append(p)
         total = len(new_files)
-        self.status_signal.emit(f"DISCOVERY_PHASE_COMPLETE: {total} files identified for processing.")
+        self._emit(self.status_signal, f"DISCOVERY_PHASE_COMPLETE: {total} files identified for processing.")
         if total == 0:
-            self.status_signal.emit("SYSTEM_IDLE: Registry up to date.")
-            self.finished_signal.emit(0)
+            self._emit(self.status_signal, "SYSTEM_IDLE: Registry up to date.")
+            self._emit(self.finished_signal, 0)
             return
 
-        self.status_signal.emit(f"HASHING_STARTED: {total} new items found.")
+        self._emit(self.status_signal, f"HASHING_STARTED: {total} new items found.")
 
         processed = 0
         batch = []
@@ -91,7 +91,7 @@ class RegistryWorker(QThread):
             for future in futures:
                 # RAM Safety Check (back-off if over configured limit)
                 while psutil.virtual_memory().used / (1024**3) > self.config.ram_limit_gb:
-                    self.status_signal.emit("MEMORY_CRITICAL: Throttling...")
+                    self._emit(self.status_signal, "MEMORY_CRITICAL: Throttling...")
                     time.sleep(2)
 
                 # PAUSE GATE
@@ -112,28 +112,58 @@ class RegistryWorker(QThread):
                 if processed % 50 == 0:
                     # Update progress and stats periodically
                     try:
-                        self.progress_signal.emit(int((processed/total)*100))
-                        self.stats_signal.emit(processed, total)
+                        self._emit(self.progress_signal, int((processed/total)*100))
+                        self._emit(self.stats_signal, processed, total)
                     except Exception:
                         pass
 
                 # Commit in blocks to avoid SQLite overhead
                 if len(batch) >= 500:
                     self._commit(batch)
-                    self.status_signal.emit(f"SYNC_PI: Committed block of 500 fingerprints.")
+                    self._emit(self.status_signal, f"SYNC_PI: Committed block of 500 fingerprints.")
                     batch = []
         
         # Final flush
         self._commit(batch)
-        self.status_signal.emit(f"SCAN_COMPLETE: {processed} files indexed.")
-        self.finished_signal.emit(processed)
+        self._emit(self.status_signal, f"SCAN_COMPLETE: {processed} files indexed.")
+        self._emit(self.finished_signal, processed)
 
     def _commit(self, batch):
         """Atomic write to the local registry DB."""
         if not batch: return
         try:
+            # Use explicit transaction to ensure atomicity and allow rollback on error
             with self.db.get_connection(self.config.registry_db_path) as conn:
-                conn.executemany("INSERT OR IGNORE INTO registry VALUES (?, ?, 1)", batch)
-                conn.commit()
+                try:
+                    conn.execute("BEGIN")
+                    conn.executemany("INSERT OR IGNORE INTO registry VALUES (?, ?, 1)", batch)
+                    conn.execute("COMMIT")
+                except Exception:
+                    try:
+                        conn.execute("ROLLBACK")
+                    except Exception:
+                        pass
+                    raise
         except Exception as e:
-            self.status_signal.emit(f"DB_WRITE_ERROR: {e}")
+            self._emit(self.status_signal, f"DB_WRITE_ERROR: {e}")
+
+    def _emit(self, signal_obj, *args):
+        """Safe emit helper for Qt Signals — falls back to logging/stderr.
+
+        Emitting Qt signals from worker threads can fail if the signal object
+        is not in the expected state. Use this helper to avoid raising
+        AttributeError and to provide a graceful fallback.
+        """
+        try:
+            signal_obj.emit(*args)
+            return
+        except Exception:
+            try:
+                import logging
+                logging.warning("Signal emit failed for %s with args %s", getattr(signal_obj, '__name__', str(signal_obj)), args)
+            except Exception:
+                try:
+                    import sys
+                    sys.stderr.write(f"Signal emit fallback: {args}\n")
+                except Exception:
+                    pass

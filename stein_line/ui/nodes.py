@@ -33,7 +33,14 @@ class FactNode(QGraphicsObject):
         else: self.color = QColor("#539bf5")
 
     def mousePressEvent(self, event):
-        self.clicked_signal.emit(self.data['fingerprint'])
+        try:
+            self.clicked_signal.emit(self.data['fingerprint'])
+        except Exception:
+            try:
+                import sys
+                sys.stderr.write(f"NODE_CLICK: {self.data['fingerprint']}\n")
+            except Exception:
+                pass
         event.accept()
         super().mousePressEvent(event)
 

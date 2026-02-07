@@ -1,6 +1,8 @@
 import sqlite3
 import os
 from pathlib import Path
+from contextlib import contextmanager
+from threading import Lock
 
 class SteinLineDB:
     """Manages forensic databases with configuration-aware locking."""
@@ -10,24 +12,52 @@ class SteinLineDB:
         self.config = config
         self.reg_path = config.registry_db_path
         self.intel_path = config.intelligence_db_path
+        # Simple connection cache for long-running threads
+        self._connections = {}
+        # Locks per DB path to make connection creation thread-safe
+        self._locks = {}
         self._initialize_schema()
-
+    @contextmanager
     def get_connection(self, db_path: str):
-        """Returns a connection optimized for the storage medium (Local vs Pi)."""
+        """Context-managed, cached connection factory with a per-path lock.
+
+        Usage:
+            with db.get_connection(path) as conn:
+                conn.execute(...)
+        """
         # CIFS/SMB detection
         is_network = "/mnt/" in db_path or db_path.startswith("\\\\")
-        
-        conn = sqlite3.connect(db_path, timeout=60)
-        
-        if is_network:
-            # Network shares MUST use DELETE mode for stability
-            conn.execute("PRAGMA journal_mode=DELETE")
-        else:
-            # Local SSDs use WAL for maximum speed
-            conn.execute("PRAGMA journal_mode=WAL")
-            
-        conn.execute("PRAGMA synchronous=NORMAL")
-        return conn
+
+        # Ensure a lock exists for this path
+        if db_path not in self._locks:
+            # Use a simple Lock to guard connection creation
+            self._locks[db_path] = Lock()
+
+        lock = self._locks[db_path]
+        # Create the connection under lock if necessary
+        with lock:
+            if db_path not in self._connections:
+                conn = sqlite3.connect(db_path, timeout=60, check_same_thread=False)
+
+                if is_network:
+                    conn.execute("PRAGMA journal_mode=DELETE")
+                else:
+                    conn.execute("PRAGMA journal_mode=WAL")
+
+                conn.execute("PRAGMA synchronous=NORMAL")
+                try:
+                    conn.execute("PRAGMA cache_size = -64000")
+                except Exception:
+                    pass
+
+                self._connections[db_path] = conn
+
+        # Yield the cached connection for use (lock is released while using)
+        try:
+            yield self._connections[db_path]
+        except Exception:
+            # Let callers handle errors; do not close cached connection here
+            raise
 
     def _initialize_schema(self):
         """Ensure the forensic tables exist on both storage nodes."""

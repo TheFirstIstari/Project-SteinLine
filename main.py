@@ -3,6 +3,7 @@ import os
 from PySide6.QtWidgets import QApplication
 from stein_line.ui.main_window import MainWindow
 from stein_line.utils.project_config import ProjectConfig
+from stein_line.utils.logger_config import setup_logging
 
 def main():
     app = QApplication(sys.argv)
@@ -16,6 +17,10 @@ def main():
     # Initialize Config
     config = ProjectConfig.load("last_project.json")
     config.auto_tune() # Auto-detect hardware on startup
+
+    # Setup logging early
+    logger = setup_logging(config)
+    logger.info("Starting SteinLine application")
 
     # Initialize Window
     window = MainWindow(config)

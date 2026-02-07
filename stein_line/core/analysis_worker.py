@@ -6,6 +6,10 @@ from pathlib import Path
 from PySide6.QtCore import QThread, Signal, QWaitCondition, QMutex
 from .deconstructor import Deconstructor
 from ..utils.db_handler import SteinLineDB
+from .checkpoint_manager import CheckpointManager
+from ..utils.signals import safe_emit
+import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 class AnalysisWorker(QThread):
     """The Neural Reasoner thread handling GPU inference and sliding windows."""
@@ -25,6 +29,8 @@ class AnalysisWorker(QThread):
         self.pause_cond = QWaitCondition()
         self.db = SteinLineDB(config)
         self.decon = Deconstructor(config)
+        self.checkpoint = CheckpointManager(config)
+        self.logger = logging.getLogger(__name__)
 
     def toggle_pause(self):
         self.is_paused = not self.is_paused
@@ -41,7 +47,7 @@ class AnalysisWorker(QThread):
         from vllm import LLM, SamplingParams
 
         try:
-            self.status_signal.emit("Initializing Neural Engine (vLLM)...")
+            safe_emit(self.status_signal, "Initializing Neural Engine (vLLM)...")
             try:
                 llm = LLM(
                     model="Qwen/Qwen2.5-7B-Instruct-AWQ",
@@ -53,7 +59,7 @@ class AnalysisWorker(QThread):
             except ValueError as ve:
                 # vLLM may raise when requested KV cache exceeds available GPU memory.
                 # Retry with a smaller context window to preserve usability.
-                self.status_signal.emit(f"LLM_INIT_WARN: {ve}. Retrying with reduced context window.")
+                safe_emit(self.status_signal, f"LLM_INIT_WARN: {ve}. Retrying with reduced context window.")
                 reduced_len = min(self.config.context_window, 8192)
                 llm = LLM(
                     model="Qwen/Qwen2.5-7B-Instruct-AWQ",
@@ -72,9 +78,9 @@ class AnalysisWorker(QThread):
                 # PAUSE CHECK
                 self.mutex.lock()
                 if self.is_paused: 
-                    self.status_signal.emit("ENGINE_PAUSED")
+                    safe_emit(self.status_signal, "ENGINE_PAUSED")
                     self.pause_cond.wait(self.mutex)
-                    self.status_signal.emit("ENGINE_RESUMED")
+                    safe_emit(self.status_signal, "ENGINE_RESUMED")
                 self.mutex.unlock()
 
                 # STOP CHECK
@@ -82,26 +88,36 @@ class AnalysisWorker(QThread):
 
                 batch = self._get_batch()
                 if not batch: 
-                    self.status_signal.emit("QUEUE_EXHAUSTED: No more files to process.")
+                    safe_emit(self.status_signal, "QUEUE_EXHAUSTED: No more files to process.")
                     break
-
                 prompts = []
                 meta = []
-                
-                # Pre-processing / Windowing
-                for fp, path in batch:
-                    text = self.decon.extract(path)
-                    if not text: continue
-                    
+
+                # Pre-processing / Windowing: extract texts in parallel to maximize CPU utilization
+                extractions = []
+                with ThreadPoolExecutor(max_workers=max(1, min(self.config.cpu_workers, len(batch)))) as ex:
+                    future_map = {ex.submit(self.decon.extract, path): (fp, path) for fp, path in batch}
+                    for fut in as_completed(future_map):
+                        fp, path = future_map[fut]
+                        try:
+                            text = fut.result()
+                        except Exception:
+                            text = None
+                        if not text:
+                            continue
+                        extractions.append((fp, Path(path).name, text))
+
+                # Build prompts from extracted texts
+                for fp, fname, text in extractions:
                     # 20k character sliding window
                     chunks = [text[i:i+20000] for i in range(0, len(text), 18000)]
                     for idx, c in enumerate(chunks):
-                        prompts.append(self._build_p(Path(path).name, c))
-                        meta.append((fp, Path(path).name))
+                        prompts.append(self._build_p(fname, c))
+                        meta.append((fp, fname))
 
                 if not prompts: continue
                 
-                self.status_signal.emit(f"GPU_REASONING: Processing {len(prompts)} segments...")
+                safe_emit(self.status_signal, f"GPU_REASONING: Processing {len(prompts)} segments...")
                 outputs = llm.generate(prompts, sampling)
                 
                 results = []
@@ -126,15 +142,21 @@ class AnalysisWorker(QThread):
                 if results:
                     self._save(results)
                     fact_count += len(results)
-                    self.fact_signal.emit(results)
+                    # Persist a checkpoint after successful save
+                    try:
+                        last_fp = results[-1][0] if results else ""
+                        self.checkpoint.save_state(proc_count + len(batch), last_fp, fact_count)
+                    except Exception:
+                        self.logger.exception("Failed to write checkpoint")
+                    safe_emit(self.fact_signal, results)
                 
                 proc_count += len(batch)
-                self.stats_signal.emit(proc_count, fact_count)
+                safe_emit(self.stats_signal, proc_count, fact_count)
 
-            self.status_signal.emit("ENGINE_IDLE: Session Complete.")
-            self.finished_signal.emit()
+            safe_emit(self.status_signal, "ENGINE_IDLE: Session Complete.")
+            safe_emit(self.finished_signal)
         except Exception as e:
-            self.status_signal.emit(f"CRITICAL: {e}")
+            safe_emit(self.status_signal, f"CRITICAL: {e}")
 
     def _build_p(self, fn, txt):
         return f"<|im_start|>system\nExtract JSON: source, date, summary, type, crime, severity.<|im_end|>\n<|im_start|>user\nFILE: {fn}\nDATA: {txt}<|im_end|>\n<|im_start|>assistant\n{{\"findings\": ["
