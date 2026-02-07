@@ -54,6 +54,55 @@ QLineEdit, QDoubleSpinBox, QSpinBox {
     border-radius: 4px;
     color: #adbac7;
 }
+/* Highlight the draggable area of the docks */
+QDockWidget {
+    border: 1px solid #2a2a2a;
+    titlebar-close-icon: none;
+    titlebar-normal-icon: none;
+}
+
+QDockWidget::title {
+    background-color: #1c2128;
+    padding: 8px;
+    color: #539bf5;
+    font-size: 11px;
+    font-weight: bold;
+    text-align: left;
+    border-bottom: 1px solid #444c56;
+}
+
+/* Ensure the splitter handles are visible for resizing */
+QMainWindow::separator {
+    background-color: #444c56;
+    width: 2px;
+    height: 2px;
+}
+
+QMainWindow::separator:hover {
+    background-color: #539bf5;
+}
+
+/* Page containers inside docks */
+SettingsPage, AnalysisPage, PerformanceDashboard, LogConsole {
+    background-color: #0d1117;
+    border: none;
+}
+
+/* Scrollbars - DAWs use slim scrollbars */
+QScrollBar:vertical {
+    border: none;
+    background: #0d1117;
+    width: 8px;
+    margin: 0px;
+}
+QScrollBar::handle:vertical {
+    background: #30363d;
+    min-height: 20px;
+    border-radius: 4px;
+}
+QScrollBar::handle:vertical:hover {
+    background: #444c56;
+}
 
 QPushButton#PrimaryAction {
     background-color: #347d39;

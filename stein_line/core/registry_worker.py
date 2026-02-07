@@ -3,6 +3,7 @@ import hashlib
 import time
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
+import psutil
 # IMPORT FIX: Added QMutex and QWaitCondition
 from PySide6.QtCore import QThread, Signal, QWaitCondition, QMutex 
 from ..utils.db_handler import SteinLineDB
@@ -52,11 +53,7 @@ class RegistryWorker(QThread):
     def run(self):
         self.status_signal.emit("Initializing Registry Scan...")
 
-        for future in futures:
-                # NEW: RAM Safety Check
-                while psutil.virtual_memory().used / (1024**3) > self.config.ram_limit_gb:
-                    self.status_signal.emit("MEMORY_CRITICAL: Throttling...")
-                    time.sleep(2) # Back-off
+        
         
         # 1. Build Incremental Cache
         existing = set()
@@ -74,10 +71,10 @@ class RegistryWorker(QThread):
             if not self.is_running: return
             for name in filenames:
                 p = str(Path(root) / name)
-                if p not in existing: 
+                if p not in existing:
                     new_files.append(p)
-        self.status_signal.emit(f"DISCOVERY_PHASE_COMPLETE: {total} files identified for processing.")
         total = len(new_files)
+        self.status_signal.emit(f"DISCOVERY_PHASE_COMPLETE: {total} files identified for processing.")
         if total == 0:
             self.status_signal.emit("SYSTEM_IDLE: Registry up to date.")
             self.finished_signal.emit(0)
@@ -92,10 +89,11 @@ class RegistryWorker(QThread):
         with ThreadPoolExecutor(max_workers=self.config.cpu_workers) as executor:
             futures = [executor.submit(self.hash_file, f) for f in new_files]
             for future in futures:
-                if len(batch) >= 500:
-                    self._commit(batch)
-                    self.status_signal.emit(f"SYNC_PI: Committed block of 500 fingerprints.")
-                    batch = []
+                # RAM Safety Check (back-off if over configured limit)
+                while psutil.virtual_memory().used / (1024**3) > self.config.ram_limit_gb:
+                    self.status_signal.emit("MEMORY_CRITICAL: Throttling...")
+                    time.sleep(2)
+
                 # PAUSE GATE
                 self.mutex.lock()
                 if self.is_paused:
@@ -103,20 +101,26 @@ class RegistryWorker(QThread):
                 self.mutex.unlock()
 
                 # STOP CHECK
-                if not self.is_running: return
+                if not self.is_running:
+                    return
 
                 res, path = future.result()
-                if res: 
+                if res:
                     batch.append((res, path))
-                
+
                 processed += 1
                 if processed % 50 == 0:
-                    self.progress_signal.emit(int((processed/total)*100))
-                    self.stats_signal.emit(processed, total)
-                
+                    # Update progress and stats periodically
+                    try:
+                        self.progress_signal.emit(int((processed/total)*100))
+                        self.stats_signal.emit(processed, total)
+                    except Exception:
+                        pass
+
                 # Commit in blocks to avoid SQLite overhead
                 if len(batch) >= 500:
                     self._commit(batch)
+                    self.status_signal.emit(f"SYNC_PI: Committed block of 500 fingerprints.")
                     batch = []
         
         # Final flush

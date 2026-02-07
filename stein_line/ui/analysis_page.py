@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QLabel, QProgressBar, QFrame)
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Signal, Slot, Qt # ADDED Slot
 from ..core.registry_worker import RegistryWorker
 from ..core.analysis_worker import AnalysisWorker
 
@@ -26,7 +26,14 @@ class AnalysisPage(QWidget):
             self.run_reg, self.pause_reg, self.stop_reg
         )
         self.reg_pbar = QProgressBar()
+        self.reg_pbar.setStyleSheet("QProgressBar { height: 10px; }")
         self.reg_box.layout().addWidget(self.reg_pbar)
+        
+        # ADDED: Explicit stat label for Hashing
+        self.reg_stats = QLabel("STAT: IDLE")
+        self.reg_stats.setStyleSheet("font-family: monospace; font-size: 10px; color: #768390;")
+        self.reg_box.layout().addWidget(self.reg_stats)
+        
         layout.addWidget(self.reg_box)
 
         # 2. Inference Task
@@ -51,19 +58,50 @@ class AnalysisPage(QWidget):
         start.clicked.connect(start_f); pause.clicked.connect(pause_f); stop.clicked.connect(stop_f)
         for b in [start, pause, stop]: btns.addWidget(b)
         l.addLayout(btns)
-        frame.start_btn = start; frame.pause_btn = pause; frame.stop_btn = stop
+        
+        # Internal reference to buttons for state management
+        frame.start_btn = start
+        frame.pause_btn = pause
+        frame.stop_btn = stop
         return frame
 
-    # --- REGISTRY LOGGING ---
+    # --- ADDED: EXPLICIT SLOTS TO PREVENT C++ CRASHES ---
+    
+    @Slot(int, int)
+    def _update_reg_progress(self, current, total):
+        self.reg_stats.setText(f"HASHING: {current:,} / {total:,} files")
+
+    @Slot(int, int)
+    def _update_inf_progress(self, processed, facts):
+        self.inf_stats.setText(f"PROCESSED: {processed:,} | FACTS_FOUND: {facts:,}")
+
+    @Slot(int)
+    def _reg_finished(self, count):
+        self.console.append_log(f"TASK_COMPLETE: Fingerprinting finished. {count:,} items synced.")
+        self.reg_box.start_btn.setEnabled(True)
+
+    @Slot()
+    def _inf_finished(self):
+        self.console.append_log("TASK_COMPLETE: Neural Reasoning Engine cycle complete.")
+        self.inf_box.start_btn.setEnabled(True)
+
+    # --- UPDATED REGISTRY LOGIC ---
     def run_reg(self):
         if not self.config.is_ready:
             self.console.append_log("COMMAND_REJECTED: Initialize project paths first.")
             return
+        
         self.console.append_log("TASK_START: File Fingerprinting Scan initiated.")
+        self.reg_box.start_btn.setEnabled(False)
+        
         self.reg_worker = RegistryWorker(self.config)
         self.reg_worker.status_signal.connect(self.console.append_log)
         self.reg_worker.progress_signal.connect(self.reg_pbar.setValue)
-        self.reg_worker.finished_signal.connect(self._reg_complete)
+        
+        # CONNECTING TO EXPLICIT SLOTS INSTEAD OF LAMBDAS
+        self.reg_worker.stats_signal.connect(self._update_reg_progress)
+        self.reg_worker.finished_signal.connect(self._reg_finished)
+        
         self.reg_worker.start()
 
     def pause_reg(self):
@@ -77,22 +115,24 @@ class AnalysisPage(QWidget):
         if self.reg_worker:
             self.console.append_log("COMMAND_SENT: Cancel request for Fingerprinting.")
             self.reg_worker.stop()
+            self.reg_box.start_btn.setEnabled(True)
 
-    def _reg_complete(self, count):
-        self.console.append_log(f"TASK_COMPLETE: {count} new files hashed and indexed.")
-
-    # --- REASONER LOGGING ---
+    # --- UPDATED REASONER LOGIC ---
     def run_inf(self):
         if not self.config.is_ready:
             self.console.append_log("COMMAND_REJECTED: Initialize project paths first.")
             return
+            
         self.console.append_log("TASK_START: Neural Reasoning Engine requested.")
+        self.inf_box.start_btn.setEnabled(False)
+        
         self.inf_worker = AnalysisWorker(self.config)
         self.inf_worker.status_signal.connect(self.console.append_log)
-        self.inf_worker.stats_signal.connect(
-            lambda p, f: self.inf_stats.setText(f"PROCESSED: {p} | FACTS: {f}")
-        )
-        self.inf_worker.finished_signal.connect(self._inf_complete)
+        
+        # CONNECTING TO EXPLICIT SLOTS
+        self.inf_worker.stats_signal.connect(self._update_inf_progress)
+        self.inf_worker.finished_signal.connect(self._inf_finished)
+        
         self.engine_started_signal.emit(self.inf_worker)
         self.inf_worker.start()
 
@@ -107,6 +147,4 @@ class AnalysisPage(QWidget):
         if self.inf_worker:
             self.console.append_log("COMMAND_SENT: Cancel request for Reasoning Engine.")
             self.inf_worker.stop()
-
-    def _inf_complete(self):
-        self.console.append_log("TASK_COMPLETE: Forensic reasoning cycle finished.")
+            self.inf_box.start_btn.setEnabled(True)

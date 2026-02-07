@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+import psutil
 from pathlib import Path
 from PySide6.QtCore import QThread, Signal, QWaitCondition, QMutex
 from .deconstructor import Deconstructor
@@ -38,16 +39,30 @@ class AnalysisWorker(QThread):
     def run(self):
         # Heavy imports inside run to keep UI launch fast
         from vllm import LLM, SamplingParams
-        
+
         try:
             self.status_signal.emit("Initializing Neural Engine (vLLM)...")
-            llm = LLM(
-                model="Qwen/Qwen2.5-7B-Instruct-AWQ",
-                gpu_memory_utilization=self.config.vram_allocation,
-                max_model_len=self.config.context_window,
-                enforce_eager=True, 
-                trust_remote_code=True
-            )
+            try:
+                llm = LLM(
+                    model="Qwen/Qwen2.5-7B-Instruct-AWQ",
+                    gpu_memory_utilization=self.config.vram_allocation,
+                    max_model_len=self.config.context_window,
+                    enforce_eager=True,
+                    trust_remote_code=True
+                )
+            except ValueError as ve:
+                # vLLM may raise when requested KV cache exceeds available GPU memory.
+                # Retry with a smaller context window to preserve usability.
+                self.status_signal.emit(f"LLM_INIT_WARN: {ve}. Retrying with reduced context window.")
+                reduced_len = min(self.config.context_window, 8192)
+                llm = LLM(
+                    model="Qwen/Qwen2.5-7B-Instruct-AWQ",
+                    gpu_memory_utilization=max(self.config.vram_allocation, 0.5),
+                    max_model_len=reduced_len,
+                    enforce_eager=True,
+                    trust_remote_code=True
+                )
+
             sampling = SamplingParams(temperature=0, max_tokens=2000, repetition_penalty=1.1)
             
             proc_count = 0
