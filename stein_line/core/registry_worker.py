@@ -65,15 +65,20 @@ class RegistryWorker(QThread):
         except Exception as e:
             self._emit(self.status_signal, f"CACHE_ERROR: {e}")
 
-        # 2. Discover new files
-        new_files = []
-        for root, _, filenames in os.walk(self.config.source_root):
-            if not self.is_running: return
-            for name in filenames:
-                p = str(Path(root) / name)
-                if p not in existing:
-                    new_files.append(p)
-        total = len(new_files)
+        # 2. Discover new files (count only, do not store to avoid memory usage)
+        total = 0
+        try:
+            for root, _, filenames in os.walk(self.config.source_root):
+                if not self.is_running:
+                    return
+                for name in filenames:
+                    p = str(Path(root) / name)
+                    if p not in existing:
+                        total += 1
+        except Exception as e:
+            self._emit(self.status_signal, f"DISCOVERY_ERROR: {e}")
+            return
+
         self._emit(self.status_signal, f"DISCOVERY_PHASE_COMPLETE: {total} files identified for processing.")
         if total == 0:
             self._emit(self.status_signal, "SYSTEM_IDLE: Registry up to date.")
@@ -85,43 +90,110 @@ class RegistryWorker(QThread):
         processed = 0
         batch = []
 
-        # 3. Process with Pause/Stop checks
+        # 3. Process with Pause/Stop checks using a bounded in-flight task window
+        max_in_flight = max(4, self.config.cpu_workers * 2)
+        futures = set()
+        from concurrent.futures import as_completed, wait, FIRST_COMPLETED
+
         with ThreadPoolExecutor(max_workers=self.config.cpu_workers) as executor:
-            futures = [executor.submit(self.hash_file, f) for f in new_files]
-            for future in futures:
-                # RAM Safety Check (back-off if over configured limit)
-                while psutil.virtual_memory().used / (1024**3) > self.config.ram_limit_gb:
-                    self._emit(self.status_signal, "MEMORY_CRITICAL: Throttling...")
-                    time.sleep(2)
+            try:
+                # Submit tasks as we walk the tree to avoid holding all paths/futures
+                for root, _, filenames in os.walk(self.config.source_root):
+                    if not self.is_running:
+                        break
+                    for name in filenames:
+                        if not self.is_running:
+                            break
+                        p = str(Path(root) / name)
+                        if p in existing:
+                            continue
 
-                # PAUSE GATE
-                self.mutex.lock()
-                if self.is_paused:
-                    self.pause_cond.wait(self.mutex)
-                self.mutex.unlock()
+                        # Submit new hashing task
+                        futures.add(executor.submit(self.hash_file, p))
 
-                # STOP CHECK
-                if not self.is_running:
-                    return
+                        # If too many in-flight tasks, wait for some to finish
+                        if len(futures) >= max_in_flight:
+                            done, _ = wait(futures, return_when=FIRST_COMPLETED)
+                            for fut in done:
+                                futures.remove(fut)
 
-                res, path = future.result()
-                if res:
-                    batch.append((res, path))
+                                # RAM Safety Check (back-off if over configured limit)
+                                while psutil.virtual_memory().used / (1024**3) > self.config.ram_limit_gb:
+                                    self._emit(self.status_signal, "MEMORY_CRITICAL: Throttling...")
+                                    time.sleep(2)
 
-                processed += 1
-                if processed % 50 == 0:
-                    # Update progress and stats periodically
+                                # PAUSE GATE
+                                self.mutex.lock()
+                                if self.is_paused:
+                                    self.pause_cond.wait(self.mutex)
+                                self.mutex.unlock()
+
+                                # STOP CHECK
+                                if not self.is_running:
+                                    break
+
+                                try:
+                                    res, path = fut.result()
+                                except Exception:
+                                    res, path = (None, None)
+
+                                if res:
+                                    batch.append((res, path))
+
+                                processed += 1
+                                if processed % 50 == 0:
+                                    # Update progress and stats periodically
+                                    try:
+                                        self._emit(self.progress_signal, int((processed/total)*100))
+                                        self._emit(self.stats_signal, processed, total)
+                                    except Exception:
+                                        pass
+
+                                # Commit in blocks to avoid SQLite overhead
+                                if len(batch) >= 500:
+                                    self._commit(batch)
+                                    self._emit(self.status_signal, f"SYNC_PI: Committed block of 500 fingerprints.")
+                                    batch = []
+
+                # After submission loop, process remaining futures
+                for fut in as_completed(futures):
+                    # RAM Safety Check
+                    while psutil.virtual_memory().used / (1024**3) > self.config.ram_limit_gb:
+                        self._emit(self.status_signal, "MEMORY_CRITICAL: Throttling...")
+                        time.sleep(2)
+
+                    # PAUSE GATE
+                    self.mutex.lock()
+                    if self.is_paused:
+                        self.pause_cond.wait(self.mutex)
+                    self.mutex.unlock()
+
+                    if not self.is_running:
+                        break
+
                     try:
-                        self._emit(self.progress_signal, int((processed/total)*100))
-                        self._emit(self.stats_signal, processed, total)
+                        res, path = fut.result()
                     except Exception:
-                        pass
+                        res, path = (None, None)
 
-                # Commit in blocks to avoid SQLite overhead
-                if len(batch) >= 500:
-                    self._commit(batch)
-                    self._emit(self.status_signal, f"SYNC_PI: Committed block of 500 fingerprints.")
-                    batch = []
+                    if res:
+                        batch.append((res, path))
+
+                    processed += 1
+                    if processed % 50 == 0:
+                        try:
+                            self._emit(self.progress_signal, int((processed/total)*100))
+                            self._emit(self.stats_signal, processed, total)
+                        except Exception:
+                            pass
+
+                    if len(batch) >= 500:
+                        self._commit(batch)
+                        self._emit(self.status_signal, f"SYNC_PI: Committed block of 500 fingerprints.")
+                        batch = []
+
+            except Exception as e:
+                self._emit(self.status_signal, f"HASHING_ERROR: {e}")
         
         # Final flush
         self._commit(batch)

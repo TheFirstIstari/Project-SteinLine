@@ -25,39 +25,27 @@ class SteinLineDB:
             with db.get_connection(path) as conn:
                 conn.execute(...)
         """
-        # CIFS/SMB detection
+        # Use a fresh connection per call to avoid cross-thread transaction visibility issues.
         is_network = "/mnt/" in db_path or db_path.startswith("\\\\")
-
-        # Ensure a lock exists for this path
-        if db_path not in self._locks:
-            # Use a simple Lock to guard connection creation
-            self._locks[db_path] = Lock()
-
-        lock = self._locks[db_path]
-        # Create the connection under lock if necessary
-        with lock:
-            if db_path not in self._connections:
-                conn = sqlite3.connect(db_path, timeout=60, check_same_thread=False)
-
-                if is_network:
-                    conn.execute("PRAGMA journal_mode=DELETE")
-                else:
-                    conn.execute("PRAGMA journal_mode=WAL")
-
-                conn.execute("PRAGMA synchronous=NORMAL")
-                try:
-                    conn.execute("PRAGMA cache_size = -64000")
-                except Exception:
-                    pass
-
-                self._connections[db_path] = conn
-
-        # Yield the cached connection for use (lock is released while using)
+        conn = sqlite3.connect(db_path, timeout=60, check_same_thread=False)
         try:
-            yield self._connections[db_path]
-        except Exception:
-            # Let callers handle errors; do not close cached connection here
-            raise
+            if is_network:
+                conn.execute("PRAGMA journal_mode=DELETE")
+            else:
+                conn.execute("PRAGMA journal_mode=WAL")
+
+            conn.execute("PRAGMA synchronous=NORMAL")
+            try:
+                conn.execute("PRAGMA cache_size = -64000")
+            except Exception:
+                pass
+
+            yield conn
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     def _initialize_schema(self):
         """Ensure the forensic tables exist on both storage nodes."""
