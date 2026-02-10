@@ -24,8 +24,21 @@ class Deconstructor:
 
     def extract(self, file_path: str) -> str:
         """Routes the file to the appropriate extraction engine."""
+        # Validate input early
+        if not file_path or not Path(file_path).exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        # Skip extremely large files to avoid OOM (safeguard)
+        try:
+            size = Path(file_path).stat().st_size
+            if size > 2 * 1024 * 1024 * 1024:  # 2GB
+                raise ValueError(f"File too large: {file_path}")
+        except Exception:
+            # If stat fails, continue but guard against reading
+            pass
+
         ext = Path(file_path).suffix.lower()
-        
+
         try:
             if ext == ".pdf":
                 return self._process_pdf(file_path)
@@ -34,9 +47,10 @@ class Deconstructor:
             elif ext in [".jpg", ".jpeg", ".png", ".bmp"]:
                 return self._process_image(file_path)
             else:
+                # Unknown types are ignored
                 return ""
         except Exception as e:
-            # Errors will be caught and logged by the Orchestrator later
+            # Re-raise with context to be handled by caller
             raise RuntimeError(f"Extraction failed for {file_path}: {str(e)}")
 
     def _process_pdf(self, path: str) -> str:

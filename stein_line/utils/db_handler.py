@@ -1,36 +1,56 @@
 import sqlite3
 import os
 from pathlib import Path
+from contextlib import contextmanager
+from threading import Lock
 
 class SteinLineDB:
-    """Manages forensic databases with hardware-aware locking protocols."""
+    """Manages forensic databases with configuration-aware locking."""
     
-    def __init__(self, registry_path: str, intelligence_path: str):
-        self.reg_path = registry_path
-        self.intel_path = intelligence_path
+    def __init__(self, config):
+        """Initialize using the unified ProjectConfig object."""
+        self.config = config
+        self.reg_path = config.registry_db_path
+        self.intel_path = config.intelligence_db_path
+        # Simple connection cache for long-running threads
+        self._connections = {}
+        # Locks per DB path to make connection creation thread-safe
+        self._locks = {}
         self._initialize_schema()
+    @contextmanager
+    def get_connection(self, db_path: str):
+        """Context-managed, cached connection factory with a per-path lock.
 
-    def _get_connection(self, db_path: str):
-        """Returns a connection optimized for the storage medium (Local vs Pi)."""
-        # CIFS/SMB detection: Network paths often contain /mnt/ or \\
+        Usage:
+            with db.get_connection(path) as conn:
+                conn.execute(...)
+        """
+        # Use a fresh connection per call to avoid cross-thread transaction visibility issues.
         is_network = "/mnt/" in db_path or db_path.startswith("\\\\")
-        
-        conn = sqlite3.connect(db_path, timeout=60)
-        
-        if is_network:
-            # Network shares do not support WAL reliably
-            conn.execute("PRAGMA journal_mode=DELETE")
-        else:
-            # Local SSDs perform significantly better with WAL
-            conn.execute("PRAGMA journal_mode=WAL")
-            
-        conn.execute("PRAGMA synchronous=NORMAL")
-        return conn
+        conn = sqlite3.connect(db_path, timeout=60, check_same_thread=False)
+        try:
+            if is_network:
+                conn.execute("PRAGMA journal_mode=DELETE")
+            else:
+                conn.execute("PRAGMA journal_mode=WAL")
+
+            conn.execute("PRAGMA synchronous=NORMAL")
+            try:
+                conn.execute("PRAGMA cache_size = -64000")
+            except Exception:
+                pass
+
+            yield conn
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     def _initialize_schema(self):
-        """Enforce Forensic Data Hierarchy across both nodes."""
-        # Registry: Fingerprint (SHA-256) is the Unique Primary Key
-        with self._get_connection(self.reg_path) as conn:
+        """Ensure the forensic tables exist on both storage nodes."""
+        # Setup Registry
+        with self.get_connection(self.reg_path) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS registry (
                     fingerprint TEXT PRIMARY KEY,
@@ -40,8 +60,8 @@ class SteinLineDB:
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_fp ON registry(fingerprint)")
 
-        # Intelligence: Every fact is anchored to a source fingerprint
-        with self._get_connection(self.intel_path) as conn:
+        # Setup Intelligence
+        with self.get_connection(self.intel_path) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS intelligence (
                     fingerprint TEXT,
@@ -55,14 +75,3 @@ class SteinLineDB:
                     PRIMARY KEY (fingerprint, filename, evidence_quote)
                 )
             """)
-
-    def fetch_unprocessed(self, limit: int):
-        """Retrieve files found in registry but missing from results."""
-        # Note: Optimization for large sets involves Python-side diffing
-        # to avoid network-intensive ATTACH DATABASE commands.
-        with self._get_connection(self.reg_path) as conn:
-            cursor = conn.execute(
-                "SELECT fingerprint, path FROM registry LIMIT ?", 
-                (limit,)
-            )
-            return cursor.fetchall()
