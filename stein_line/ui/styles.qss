@@ -249,6 +249,50 @@ QMenu::item:selected {
     color: #539bf5;
 }
 
+/* STATUS STRIP */
+QToolBar#SessionStatusStrip {
+    background-color: #1c2128;
+    border-bottom: 1px solid #444c56;
+    spacing: 8px;
+    padding: 4px 6px;
+}
+
+QToolBar#SessionStatusStrip QLabel#StatusProject {
+    color: #adbac7;
+    font-weight: 600;
+    padding: 2px 4px;
+}
+
+QToolBar#SessionStatusStrip QLabel#StatusReadiness,
+QToolBar#SessionStatusStrip QLabel#StatusWorker {
+    border: 1px solid #444c56;
+    border-radius: 10px;
+    padding: 3px 10px;
+    font-family: 'Consolas', monospace;
+    font-size: 11px;
+    color: #adbac7;
+    background-color: #0d1117;
+}
+
+QToolBar#SessionStatusStrip QLabel#StatusReadiness[status="ready"],
+QToolBar#SessionStatusStrip QLabel#StatusWorker[status="ready"],
+QToolBar#SessionStatusStrip QLabel#StatusWorker[status="running"] {
+    color: #7ee787;
+    border-color: #347d39;
+}
+
+QToolBar#SessionStatusStrip QLabel#StatusReadiness[status="not_ready"],
+QToolBar#SessionStatusStrip QLabel#StatusWorker[status="paused"],
+QToolBar#SessionStatusStrip QLabel#StatusWorker[status="cancelling"] {
+    color: #e3b341;
+    border-color: #9a6700;
+}
+
+QToolBar#SessionStatusStrip QLabel#StatusWorker[status="error"] {
+    color: #ff7b72;
+    border-color: #da3633;
+}
+
 /* DOCK WIDGETS */
 QDockWidget {
     titlebar-close-icon: none;

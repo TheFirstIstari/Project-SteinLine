@@ -1,0 +1,14 @@
+[tools]
+python = "3.11"
+
+[tasks.install]
+description = "Install Python dependencies"
+run = "python -m pip install -r requirements.txt"
+
+[tasks.run]
+description = "Run SteinLine UI"
+run = "python main.py"
+
+[tasks.run-headless]
+description = "Run SteinLine UI on headless display :1"
+run = "DISPLAY=:1 python main.py"
