@@ -1,6 +1,7 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QLabel, QProgressBar, QFrame)
 from PySide6.QtCore import Signal, Slot, Qt # ADDED Slot
+from datetime import datetime
 from ..core.registry_worker import RegistryWorker
 from ..core.analysis_worker import AnalysisWorker
 
@@ -28,6 +29,10 @@ class AnalysisPage(QWidget):
         self.reg_pbar = QProgressBar()
         self.reg_pbar.setStyleSheet("QProgressBar { height: 10px; }")
         self.reg_box.layout().addWidget(self.reg_pbar)
+
+        self.reg_status = QLabel("STATE: IDLE")
+        self.reg_status.setStyleSheet("font-family: monospace; font-size: 10px; color: #9da7b3;")
+        self.reg_box.layout().addWidget(self.reg_status)
         
         # ADDED: Explicit stat label for Hashing
         self.reg_stats = QLabel("STAT: IDLE")
@@ -41,12 +46,37 @@ class AnalysisPage(QWidget):
             "STEP_02: NEURAL_REASONING", 
             self.run_inf, self.pause_inf, self.stop_inf
         )
+        self.inf_status = QLabel("STATE: IDLE")
+        self.inf_status.setStyleSheet("font-family: monospace; font-size: 10px; color: #9da7b3;")
+        self.inf_box.layout().addWidget(self.inf_status)
         self.inf_stats = QLabel("STAT: IDLE")
         self.inf_stats.setStyleSheet("font-family: monospace; font-size: 10px; color: #768390;")
         self.inf_box.layout().addWidget(self.inf_stats)
         layout.addWidget(self.inf_box)
+
+        self.set_session_ready(self.config.is_ready)
         
         layout.addStretch()
+
+    def set_session_ready(self, ready: bool):
+        self.reg_box.start_btn.setEnabled(ready)
+        self.inf_box.start_btn.setEnabled(ready)
+        self.reg_box.pause_btn.setEnabled(False)
+        self.reg_box.stop_btn.setEnabled(False)
+        self.inf_box.pause_btn.setEnabled(False)
+        self.inf_box.stop_btn.setEnabled(False)
+        self.reg_box.pause_btn.setText("Pause")
+        self.inf_box.pause_btn.setText("Pause")
+        self._set_reg_state("READY" if ready else "WAITING_FOR_INIT")
+        self._set_inf_state("READY" if ready else "WAITING_FOR_INIT")
+
+    def _set_reg_state(self, state: str):
+        ts = datetime.now().strftime("%H:%M:%S")
+        self.reg_status.setText(f"STATE: {state} @ {ts}")
+
+    def _set_inf_state(self, state: str):
+        ts = datetime.now().strftime("%H:%M:%S")
+        self.inf_status.setText(f"STATE: {state} @ {ts}")
 
     def _create_task_box(self, title, start_f, pause_f, stop_f):
         frame = QFrame()
@@ -78,21 +108,33 @@ class AnalysisPage(QWidget):
     @Slot(int)
     def _reg_finished(self, count):
         self.console.append_log(f"TASK_COMPLETE: Fingerprinting finished. {count:,} items synced.")
-        self.reg_box.start_btn.setEnabled(True)
+        self.reg_box.start_btn.setEnabled(self.config.is_ready)
+        self.reg_box.pause_btn.setEnabled(False)
+        self.reg_box.stop_btn.setEnabled(False)
+        self.reg_box.pause_btn.setText("Pause")
+        self._set_reg_state("IDLE")
 
     @Slot()
     def _inf_finished(self):
         self.console.append_log("TASK_COMPLETE: Neural Reasoning Engine cycle complete.")
-        self.inf_box.start_btn.setEnabled(True)
+        self.inf_box.start_btn.setEnabled(self.config.is_ready)
+        self.inf_box.pause_btn.setEnabled(False)
+        self.inf_box.stop_btn.setEnabled(False)
+        self.inf_box.pause_btn.setText("Pause")
+        self._set_inf_state("IDLE")
 
     # --- UPDATED REGISTRY LOGIC ---
     def run_reg(self):
         if not self.config.is_ready:
             self.console.append_log("COMMAND_REJECTED: Initialize project paths first.")
+            self._set_reg_state("REJECTED_NOT_READY")
             return
         
         self.console.append_log("TASK_START: File Fingerprinting Scan initiated.")
         self.reg_box.start_btn.setEnabled(False)
+        self.reg_box.pause_btn.setEnabled(True)
+        self.reg_box.stop_btn.setEnabled(True)
+        self._set_reg_state("RUNNING")
         
         self.reg_worker = RegistryWorker(self.config)
         self.reg_worker.status_signal.connect(self.console.append_log)
@@ -110,21 +152,30 @@ class AnalysisPage(QWidget):
             status = "RESUMED" if not self.reg_worker.is_paused else "PAUSED"
             self.console.append_log(f"COMMAND_SENT: Fingerprinting process {status}.")
             self.reg_box.pause_btn.setText("Resume" if self.reg_worker.is_paused else "Pause")
+            self._set_reg_state("PAUSED" if self.reg_worker.is_paused else "RUNNING")
 
     def stop_reg(self):
         if self.reg_worker:
             self.console.append_log("COMMAND_SENT: Cancel request for Fingerprinting.")
             self.reg_worker.stop()
-            self.reg_box.start_btn.setEnabled(True)
+            self.reg_box.start_btn.setEnabled(self.config.is_ready)
+            self.reg_box.pause_btn.setEnabled(False)
+            self.reg_box.stop_btn.setEnabled(False)
+            self.reg_box.pause_btn.setText("Pause")
+            self._set_reg_state("CANCELLING")
 
     # --- UPDATED REASONER LOGIC ---
     def run_inf(self):
         if not self.config.is_ready:
             self.console.append_log("COMMAND_REJECTED: Initialize project paths first.")
+            self._set_inf_state("REJECTED_NOT_READY")
             return
             
         self.console.append_log("TASK_START: Neural Reasoning Engine requested.")
         self.inf_box.start_btn.setEnabled(False)
+        self.inf_box.pause_btn.setEnabled(True)
+        self.inf_box.stop_btn.setEnabled(True)
+        self._set_inf_state("RUNNING")
         
         self.inf_worker = AnalysisWorker(self.config)
         self.inf_worker.status_signal.connect(self.console.append_log)
@@ -150,9 +201,14 @@ class AnalysisPage(QWidget):
             status = "RESUMED" if not self.inf_worker.is_paused else "PAUSED"
             self.console.append_log(f"COMMAND_SENT: Reasoning engine {status}.")
             self.inf_box.pause_btn.setText("Resume" if self.inf_worker.is_paused else "Pause")
+            self._set_inf_state("PAUSED" if self.inf_worker.is_paused else "RUNNING")
 
     def stop_inf(self):
         if self.inf_worker:
             self.console.append_log("COMMAND_SENT: Cancel request for Reasoning Engine.")
             self.inf_worker.stop()
-            self.inf_box.start_btn.setEnabled(True)
+            self.inf_box.start_btn.setEnabled(self.config.is_ready)
+            self.inf_box.pause_btn.setEnabled(False)
+            self.inf_box.stop_btn.setEnabled(False)
+            self.inf_box.pause_btn.setText("Pause")
+            self._set_inf_state("CANCELLING")

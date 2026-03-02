@@ -41,6 +41,8 @@ class MainWindow(QMainWindow):
         self.analysis_page = AnalysisPage(self.config, self.console)
         self.perf_dashboard = PerformanceDashboard(self.config)
 
+        self.analysis_page.set_session_ready(self.config.is_ready)
+
         self.setup_dock = self.create_module("PROJECT_SETUP", self.settings_page, Qt.LeftDockWidgetArea)
         self.analysis_dock = self.create_module("ANALYSIS_ENGINE", self.analysis_page, Qt.LeftDockWidgetArea)
         self.perf_dock = self.create_module("PERFORMANCE", self.perf_dashboard, Qt.RightDockWidgetArea)
@@ -73,7 +75,10 @@ class MainWindow(QMainWindow):
 
     def on_config_applied(self, status):
         self.console.append_log(f"INIT_RESULT: {status}")
-        if "READY" in status: self.board_view.load_universe()
+        ready = "READY" in status
+        self.analysis_page.set_session_ready(ready)
+        if ready:
+            self.board_view.load_universe()
 
     # --- PERSISTENCE LOGIC ---
     def save_ui_state(self):
@@ -88,11 +93,28 @@ class MainWindow(QMainWindow):
         if settings.value("windowState"):
             self.restoreState(settings.value("windowState"))
 
+    def apply_default_layout(self):
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.setup_dock)
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.analysis_dock)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.perf_dock)
+        self.addDockWidget(Qt.BottomDockWidgetArea, self.console_dock)
+
+        self.tabifyDockWidget(self.setup_dock, self.analysis_dock)
+        self.setup_dock.show()
+        self.analysis_dock.show()
+        self.perf_dock.show()
+        self.console_dock.show()
+
+        self.raise_()
+        self.activateWindow()
+
     def reset_layout(self):
-        """Clears saved UI state to return to factory defaults."""
+        """Clears saved UI state and reapplies factory layout immediately."""
         settings = QSettings("SteinLineProject", "Workstation")
         settings.clear()
-        self.console.append_log("UI_RESET: Restart application to apply default layout.")
+        self.apply_default_layout()
+        self.save_ui_state()
+        self.console.append_log("UI_RESET: Default workspace layout restored.")
 
     def closeEvent(self, event):
         self.save_ui_state()

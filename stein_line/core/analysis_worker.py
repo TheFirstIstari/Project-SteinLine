@@ -5,7 +5,6 @@ import psutil
 import time
 from pathlib import Path
 from PySide6.QtCore import QThread, Signal, QWaitCondition, QMutex
-from .deconstructor import Deconstructor
 from ..utils.db_handler import SteinLineDB
 from .checkpoint_manager import CheckpointManager
 from ..utils.signals import safe_emit
@@ -30,7 +29,7 @@ class AnalysisWorker(QThread):
         self.mutex = QMutex()
         self.pause_cond = QWaitCondition()
         self.db = SteinLineDB(config)
-        self.decon = Deconstructor(config)
+        self.decon = None
         self.checkpoint = CheckpointManager(config)
         self.logger = logging.getLogger(__name__)
 
@@ -45,10 +44,14 @@ class AnalysisWorker(QThread):
         self.pause_cond.wakeAll()
 
     def run(self):
-        # Heavy imports inside run to keep UI launch fast
-        from vllm import LLM, SamplingParams
-
         try:
+            # Heavy imports inside run to keep UI launch fast
+            from vllm import LLM, SamplingParams
+            from .deconstructor import Deconstructor
+
+            if self.decon is None:
+                self.decon = Deconstructor(self.config)
+
             safe_emit(self.status_signal, "Initializing Neural Engine (vLLM)...")
             try:
                 llm = LLM(

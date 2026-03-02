@@ -1,8 +1,6 @@
 import os
 from pathlib import Path
 import fitz  # PyMuPDF
-from faster_whisper import WhisperModel
-import easyocr
 import logging
 
 # Suppress verbose logging from sub-libraries
@@ -13,6 +11,14 @@ class Deconstructor:
 
     def __init__(self, config):
         self.config = config
+        try:
+            from faster_whisper import WhisperModel
+            import easyocr
+        except ModuleNotFoundError as e:
+            raise RuntimeError(
+                "Missing AI extraction dependency. Install required packages from requirements.txt "
+                "(notably faster-whisper and easyocr)."
+            ) from e
         
         # Initialize OCR (Forced to CPU to save VRAM for the Reasoner)
         self.ocr = easyocr.Reader(['en'], gpu=self.config.use_gpu_ocr)
