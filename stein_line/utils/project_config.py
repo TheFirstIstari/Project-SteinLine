@@ -20,6 +20,13 @@ class ProjectConfig:
     
     use_gpu_ocr: bool = False
     use_gpu_whisper: bool = False
+
+    compute_vendor: str = "cpu"
+    compute_profile: str = "cpu"
+    detected_gpu_name: str = "CPU Only"
+    llm_backend: str = "cpu-fallback"
+    ocr_device: str = "cpu"
+    whisper_device: str = "cpu"
     
     is_ready: bool = False
 
@@ -30,17 +37,25 @@ class ProjectConfig:
         total_ram = HardwareProbe.get_total_ram_gb()
         self.ram_limit_gb = round(total_ram * 0.75, 1)
         
-        # 2. Detect GPU (Optimized for RTX 3090/4090)
-        gpu = HardwareProbe.get_gpu_info()
-        if gpu["gpu_found"]:
+        # 2. Detect vendor-agnostic compute capabilities
+        capabilities = HardwareProbe.get_compute_capabilities()
+        self.compute_vendor = capabilities.get("vendor", "cpu")
+        self.compute_profile = capabilities.get("profile", "cpu")
+        self.detected_gpu_name = capabilities.get("name", "CPU Only")
+        self.llm_backend = capabilities.get("llm_backend", "cpu-fallback")
+        self.ocr_device = capabilities.get("ocr_device", "cpu")
+        self.whisper_device = capabilities.get("whisper_device", "cpu")
+
+        self.use_gpu_ocr = self.ocr_device == "cuda"
+        self.use_gpu_whisper = self.whisper_device == "cuda"
+
+        if self.compute_vendor == "nvidia":
             self.vram_allocation = 0.45
-            self.use_gpu_ocr = True
-            # Expand context window for 24GB+ cards
-            if gpu["total_vram_gb"] >= 20:
+            if float(capabilities.get("total_vram_gb", 0.0)) >= 20:
                 self.context_window = 32768
         else:
             self.vram_allocation = 0.0
-            self.use_gpu_ocr = False
+            self.context_window = min(self.context_window, 8192)
 
     def validate(self) -> bool:
         """Verify that all paths are set and accessible."""

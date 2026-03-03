@@ -20,13 +20,20 @@ class Deconstructor:
                 "(notably faster-whisper and easyocr)."
             ) from e
         
-        # Initialize OCR (Forced to CPU to save VRAM for the Reasoner)
-        self.ocr = easyocr.Reader(['en'], gpu=self.config.use_gpu_ocr)
+        # Initialize OCR with compute profile (fallback to CPU when unsupported)
+        ocr_gpu_enabled = getattr(self.config, "ocr_device", "cpu") == "cuda"
+        try:
+            self.ocr = easyocr.Reader(['en'], gpu=ocr_gpu_enabled)
+        except Exception:
+            self.ocr = easyocr.Reader(['en'], gpu=False)
         
-        # Initialize Whisper (Optimized for CPU with int8)
-        device = "cuda" if self.config.use_gpu_whisper else "cpu"
+        # Initialize Whisper with compute profile (fallback to CPU on error)
+        device = getattr(self.config, "whisper_device", "cpu")
         compute_type = "float16" if device == "cuda" else "int8"
-        self.whisper = WhisperModel("base", device=device, compute_type=compute_type)
+        try:
+            self.whisper = WhisperModel("base", device=device, compute_type=compute_type)
+        except Exception:
+            self.whisper = WhisperModel("base", device="cpu", compute_type="int8")
 
     def extract(self, file_path: str) -> str:
         """Routes the file to the appropriate extraction engine."""

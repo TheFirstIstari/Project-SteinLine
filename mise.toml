@@ -12,3 +12,7 @@ run = "python main.py"
 [tasks.run-headless]
 description = "Run SteinLine UI on headless display :1"
 run = "DISPLAY=:1 python main.py"
+
+[tasks.benchmark]
+description = "Run full benchmark suite"
+run = "python benchmark.py --scenario full"

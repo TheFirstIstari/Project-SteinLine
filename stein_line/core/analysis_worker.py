@@ -11,6 +11,7 @@ from ..utils.signals import safe_emit
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import gc
+from datetime import datetime
 
 class AnalysisWorker(QThread):
     """The Neural Reasoner thread handling GPU inference and sliding windows."""
@@ -45,36 +46,40 @@ class AnalysisWorker(QThread):
 
     def run(self):
         try:
-            # Heavy imports inside run to keep UI launch fast
-            from vllm import LLM, SamplingParams
             from .deconstructor import Deconstructor
 
             if self.decon is None:
                 self.decon = Deconstructor(self.config)
 
-            safe_emit(self.status_signal, "Initializing Neural Engine (vLLM)...")
-            try:
-                llm = LLM(
-                    model="Qwen/Qwen2.5-7B-Instruct-AWQ",
-                    gpu_memory_utilization=self.config.vram_allocation,
-                    max_model_len=self.config.context_window,
-                    enforce_eager=True,
-                    trust_remote_code=True
-                )
-            except ValueError as ve:
-                # vLLM may raise when requested KV cache exceeds available GPU memory.
-                # Retry with a smaller context window to preserve usability.
-                safe_emit(self.status_signal, f"LLM_INIT_WARN: {ve}. Retrying with reduced context window.")
-                reduced_len = min(self.config.context_window, 8192)
-                llm = LLM(
-                    model="Qwen/Qwen2.5-7B-Instruct-AWQ",
-                    gpu_memory_utilization=max(self.config.vram_allocation, 0.5),
-                    max_model_len=reduced_len,
-                    enforce_eager=True,
-                    trust_remote_code=True
-                )
+            llm = None
+            sampling = None
+            llm_mode = getattr(self.config, "llm_backend", "cpu-fallback")
+            if llm_mode == "vllm":
+                # Heavy imports inside run to keep UI launch fast
+                from vllm import LLM, SamplingParams
+                safe_emit(self.status_signal, "Initializing Neural Engine (vLLM)...")
+                try:
+                    llm = LLM(
+                        model="Qwen/Qwen2.5-7B-Instruct-AWQ",
+                        gpu_memory_utilization=self.config.vram_allocation,
+                        max_model_len=self.config.context_window,
+                        enforce_eager=True,
+                        trust_remote_code=True
+                    )
+                except ValueError as ve:
+                    safe_emit(self.status_signal, f"LLM_INIT_WARN: {ve}. Retrying with reduced context window.")
+                    reduced_len = min(self.config.context_window, 8192)
+                    llm = LLM(
+                        model="Qwen/Qwen2.5-7B-Instruct-AWQ",
+                        gpu_memory_utilization=max(self.config.vram_allocation, 0.5),
+                        max_model_len=reduced_len,
+                        enforce_eager=True,
+                        trust_remote_code=True
+                    )
 
-            sampling = SamplingParams(temperature=0, max_tokens=2000, repetition_penalty=1.1)
+                sampling = SamplingParams(temperature=0, max_tokens=2000, repetition_penalty=1.1)
+            else:
+                safe_emit(self.status_signal, "LLM_BACKEND: CPU fallback reasoning mode enabled.")
             
             proc_count = 0
             fact_count = 0
@@ -137,56 +142,69 @@ class AnalysisWorker(QThread):
                     continue
 
                 llm_chunk = int(getattr(self.config, 'llm_chunk_size', 20))
-                safe_emit(self.status_signal, f"GPU_REASONING: Processing {len(prompts)} segments in chunks of {llm_chunk}...")
+                safe_emit(self.status_signal, f"REASONING: Processing {len(prompts)} segments in chunks of {llm_chunk}...")
 
                 telemetry_counter = 0
                 for start in range(0, len(prompts), llm_chunk):
                     sub_prompts = prompts[start:start+llm_chunk]
                     sub_meta = meta[start:start+llm_chunk]
 
-                    # Adaptive generation: if vLLM raises on large batches, reduce chunk size and retry
-                    gen_attempt_chunk = llm_chunk
-                    outputs = None
-                    while True:
-                        try:
-                            outputs = llm.generate(sub_prompts, sampling)
-                            break
-                        except ValueError as ve:
-                            # Likely KV cache exhaustion — reduce batch size conservatively
-                            safe_emit(self.status_signal, f"LLM_GENERATE_WARN: {ve}. Reducing chunk size from {gen_attempt_chunk}.")
-                            gen_attempt_chunk = max(1, gen_attempt_chunk // 2)
-                            if gen_attempt_chunk == 1:
-                                # give up on this prompt batch; skip to next
-                                safe_emit(self.status_signal, "LLM_GENERATE_ERROR: Unable to process chunk; skipping.")
+                    results = []
+                    if llm is not None and sampling is not None:
+                        gen_attempt_chunk = llm_chunk
+                        outputs = None
+                        while True:
+                            try:
+                                outputs = llm.generate(sub_prompts, sampling)
+                                break
+                            except ValueError as ve:
+                                safe_emit(self.status_signal, f"LLM_GENERATE_WARN: {ve}. Reducing chunk size from {gen_attempt_chunk}.")
+                                gen_attempt_chunk = max(1, gen_attempt_chunk // 2)
+                                if gen_attempt_chunk == 1:
+                                    safe_emit(self.status_signal, "LLM_GENERATE_ERROR: Unable to process chunk; skipping.")
+                                    outputs = []
+                                    break
+                                sub_prompts = sub_prompts[:gen_attempt_chunk]
+                                sub_meta = sub_meta[:gen_attempt_chunk]
+                            except Exception:
+                                self.logger.exception("Unexpected LLM generate error")
                                 outputs = []
                                 break
-                            # shrink sub_prompts to new size and retry
-                            sub_prompts = sub_prompts[:gen_attempt_chunk]
-                            sub_meta = sub_meta[:gen_attempt_chunk]
-                        except Exception as e:
-                            self.logger.exception("Unexpected LLM generate error")
-                            outputs = []
-                            break
 
-                    results = []
-                    for i, out in enumerate(outputs):
-                        try:
-                            raw = out.outputs[0].text
-                        except Exception:
-                            continue
-                        # Extract objects with regex to ignore chat filler
-                        items = re.findall(r'\{[^{}]*\}', raw)
-                        for item in items:
+                        for i, out in enumerate(outputs):
                             try:
-                                f = json.loads(item.replace('\n',' '))
+                                raw = out.outputs[0].text
+                            except Exception:
+                                continue
+                            items = re.findall(r'\{[^{}]*\}', raw)
+                            for item in items:
+                                try:
+                                    f = json.loads(item.replace('\n',' '))
+                                    results.append((
+                                        sub_meta[i][0], sub_meta[i][1],
+                                        str(f.get('source','N/A')),
+                                        str(f.get('date','Unknown')),
+                                        str(f.get('summary','')),
+                                        str(f.get('type','General')),
+                                        str(f.get('crime','None')),
+                                        1
+                                    ))
+                                except Exception:
+                                    continue
+                    else:
+                        for i, prompt in enumerate(sub_prompts):
+                            try:
+                                snippet = prompt[-1200:].replace("\n", " ").strip()
+                                if len(snippet) < 40:
+                                    continue
                                 results.append((
                                     sub_meta[i][0], sub_meta[i][1],
-                                    str(f.get('source','N/A')),
-                                    str(f.get('date','Unknown')),
-                                    str(f.get('summary','')),
-                                    str(f.get('type','General')),
-                                    str(f.get('crime','None')),
-                                    1
+                                    "CPU-FALLBACK",
+                                    datetime.utcnow().date().isoformat(),
+                                    snippet[:300],
+                                    "General",
+                                    "Unclassified",
+                                    0
                                 ))
                             except Exception:
                                 continue
@@ -209,7 +227,8 @@ class AnalysisWorker(QThread):
 
                     # Free references and collect garbage to avoid memory growth
                     try:
-                        del outputs
+                        if 'outputs' in locals():
+                            del outputs
                         del results
                     except Exception:
                         pass
@@ -226,18 +245,13 @@ class AnalysisWorker(QThread):
                         except Exception:
                             pass
 
-                # After processing chunks, mark any fingerprints from this batch that produced no results
+                # After processing chunks, mark any fingerprints from this batch as processed
                 try:
-                    placeholders = []
                     for fp, path in batch:
                         if fp not in processed_fps:
-                            # match expected intelligence table columns: (fingerprint, filename, evidence_quote, associated_date, fact_summary, category, identified_crime, severity_score, timestamp)
-                            placeholders.append((fp, Path(path).name, '', '', '', 'General', '', 0, None))
-                    if placeholders:
-                        # Insert placeholder intelligence rows so files are considered processed
-                        self._save(placeholders)
+                            self.db.mark_processed(fp, path, "analysis")
                 except Exception:
-                    self.logger.exception("Failed to write placeholder intelligence rows")
+                    self.logger.exception("Failed to mark processed rows")
 
                 # cleanup large buffers
                 try:
@@ -267,7 +281,8 @@ class AnalysisWorker(QThread):
                 rows = conn.execute(f"""
                     SELECT r.fingerprint, r.path FROM registry r
                     LEFT JOIN intel.intelligence i ON r.fingerprint = i.fingerprint
-                    WHERE i.fingerprint IS NULL
+                    LEFT JOIN intel.processed_files p ON r.fingerprint = p.fingerprint
+                    WHERE i.fingerprint IS NULL AND p.fingerprint IS NULL
                     LIMIT {self.config.batch_size}
                 """).fetchall()
 
