@@ -10,6 +10,8 @@ venv/
 *.db-journal
 *.db-shm
 *.db-wal
+*.pdf
+*.PDF
 last_project.json
 
 # Model weights (Local downloads)

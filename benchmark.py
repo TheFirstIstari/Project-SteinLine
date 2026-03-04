@@ -8,7 +8,6 @@ from pathlib import Path
 
 import psutil
 
-from stein_line.core.deconstructor import Deconstructor
 from stein_line.utils.db_handler import SteinLineDB
 from stein_line.utils.project_config import ProjectConfig
 
@@ -57,6 +56,15 @@ def run_registry_bench(files, db_path, run_id):
 
 
 def run_extract_bench(config: ProjectConfig, files, db_path, run_id):
+    try:
+        from stein_line.core.deconstructor import Deconstructor
+    except ModuleNotFoundError as e:
+        metric(db_path, run_id, "extract", "skipped", 1, "flag")
+        metric(db_path, run_id, "extract", "files_extracted", 0, "count")
+        metric(db_path, run_id, "extract", "elapsed", 0.0, "sec")
+        metric(db_path, run_id, "extract", "throughput", 0.0, "files_per_sec")
+        return f"extract stage skipped: missing dependency ({e.name})"
+
     extractor = Deconstructor(config)
     t0 = time.perf_counter()
     extracted = 0
@@ -75,6 +83,7 @@ def run_extract_bench(config: ProjectConfig, files, db_path, run_id):
     metric(db_path, run_id, "extract", "chars_out", total_chars, "chars")
     metric(db_path, run_id, "extract", "elapsed", elapsed, "sec")
     metric(db_path, run_id, "extract", "throughput", extracted / elapsed, "files_per_sec")
+    return "extract stage completed"
 
 
 def run_reasoning_bench(config: ProjectConfig, db_path, run_id):
@@ -119,8 +128,8 @@ def run_full(args):
     if args.source_root:
         config.source_root = args.source_root
 
-    source_root = config.source_root
-    if not source_root or not Path(source_root).exists():
+    source_root = config.source_root or str(Path.cwd())
+    if not Path(source_root).exists():
         raise RuntimeError("Source root missing. Set --source-root or initialize project config first.")
 
     files = iter_files(source_root, args.max_files)
@@ -144,12 +153,13 @@ def run_full(args):
     metric(db_path, run_id, "system", "rss_start", rss_start, "mb")
 
     t_all = time.perf_counter()
+    notes = []
     try:
         if args.scenario in ("registry", "full"):
             run_registry_bench(files, db_path, run_id)
 
         if args.scenario in ("extract", "full"):
-            run_extract_bench(config, files, db_path, run_id)
+            notes.append(run_extract_bench(config, files, db_path, run_id))
 
         if args.scenario in ("reasoning", "full"):
             run_reasoning_bench(config, db_path, run_id)
@@ -159,7 +169,8 @@ def run_full(args):
         metric(db_path, run_id, "system", "rss_end", rss_end, "mb")
         metric(db_path, run_id, "system", "elapsed_total", total_elapsed, "sec")
 
-        SteinLineDB.benchmark_finish(db_path, run_id, "success", notes=f"files={len(files)}")
+        summary_note = "; ".join([f"files={len(files)}"] + notes)
+        SteinLineDB.benchmark_finish(db_path, run_id, "success", notes=summary_note)
 
         print(json.dumps({
             "run_id": run_id,
@@ -169,6 +180,7 @@ def run_full(args):
             "compute_profile": getattr(config, "compute_profile", "cpu"),
             "device": getattr(config, "detected_gpu_name", "CPU Only"),
             "db_path": db_path,
+            "notes": notes,
         }, indent=2))
     except Exception as e:
         SteinLineDB.benchmark_finish(db_path, run_id, "failed", notes=str(e))

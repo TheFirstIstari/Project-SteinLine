@@ -44,6 +44,88 @@ class AnalysisWorker(QThread):
         self.is_paused = False
         self.pause_cond.wakeAll()
 
+    def _extract_date(self, text: str) -> str:
+        # ISO-like dates
+        m = re.search(r"\b(20\d{2}|19\d{2})[-/](0?[1-9]|1[0-2])[-/](0?[1-9]|[12]\d|3[01])\b", text)
+        if m:
+            year, month, day = m.group(1), int(m.group(2)), int(m.group(3))
+            return f"{year}-{month:02d}-{day:02d}"
+
+        # DD/MM/YYYY or MM/DD/YYYY fallback (store normalized as detected order dd/mm/yyyy)
+        m = re.search(r"\b([0-2]?\d|3[01])[\-/]([0]?\d|1[0-2])[\-/](20\d{2}|19\d{2})\b", text)
+        if m:
+            day, month, year = int(m.group(1)), int(m.group(2)), m.group(3)
+            return f"{year}-{month:02d}-{day:02d}"
+
+        # Month-name dates
+        m = re.search(
+            r"\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+([0-2]?\d|3[01]),?\s+(20\d{2}|19\d{2})\b",
+            text,
+            re.IGNORECASE,
+        )
+        if m:
+            month_map = {
+                "january": 1, "february": 2, "march": 3, "april": 4,
+                "may": 5, "june": 6, "july": 7, "august": 8,
+                "september": 9, "october": 10, "november": 11, "december": 12,
+            }
+            month = month_map[m.group(1).lower()]
+            day = int(m.group(2))
+            year = m.group(3)
+            return f"{year}-{month:02d}-{day:02d}"
+
+        return "Unknown"
+
+    def _infer_category(self, text: str) -> str:
+        lowered = text.lower()
+        category_rules = [
+            ("Cyber", ["phish", "malware", "ransom", "credential", "breach", "exploit", "cyber"]),
+            ("Financial", ["fraud", "money", "invoice", "bank", "payment", "wire transfer", "embezzle"]),
+            ("Violence", ["assault", "weapon", "shoot", "homicide", "battery", "threat", "injury"]),
+            ("Narcotics", ["drug", "narcotic", "meth", "cocaine", "fentanyl", "trafficking"]),
+            ("Identity", ["identity", "passport", "social security", "ssn", "forged", "impersonat"]),
+            ("Communication", ["email", "chat", "message", "call", "transcript", "conversation"]),
+        ]
+
+        best_category = "General"
+        best_score = 0
+        for category, terms in category_rules:
+            score = sum(1 for t in terms if t in lowered)
+            if score > best_score:
+                best_score = score
+                best_category = category
+        return best_category
+
+    def _infer_crime(self, text: str, category: str) -> str:
+        lowered = text.lower()
+        if any(k in lowered for k in ["fraud", "scam", "embezzle"]):
+            return "Fraud"
+        if any(k in lowered for k in ["assault", "homicide", "battery"]):
+            return "Assault/Homicide"
+        if any(k in lowered for k in ["ransom", "malware", "phish", "exploit"]):
+            return "Cybercrime"
+        if any(k in lowered for k in ["drug", "narcotic", "trafficking"]):
+            return "Narcotics Trafficking"
+        if any(k in lowered for k in ["forged", "identity", "impersonat", "ssn"]):
+            return "Identity Crime"
+        return category if category != "General" else "Unclassified"
+
+    def _severity_score(self, text: str, category: str) -> int:
+        lowered = text.lower()
+        base = 1
+        if category in {"Violence", "Narcotics", "Cyber"}:
+            base += 1
+        high_risk_terms = ["weapon", "homicide", "trafficking", "ransom", "explosive", "kill", "threat"]
+        base += sum(1 for t in high_risk_terms if t in lowered)
+        return max(1, min(base, 10))
+
+    def _summarize_text(self, text: str) -> str:
+        clean = re.sub(r"\s+", " ", text).strip()
+        if not clean:
+            return ""
+        sentence = re.split(r"(?<=[.!?])\s+", clean)[0]
+        return sentence[:280]
+
     def run(self):
         try:
             from .deconstructor import Deconstructor
@@ -192,22 +274,37 @@ class AnalysisWorker(QThread):
                                 except Exception:
                                     continue
                     else:
-                        for i, prompt in enumerate(sub_prompts):
+                        grouped = {}
+                        for i, _prompt in enumerate(sub_prompts):
                             try:
-                                snippet = prompt[-1200:].replace("\n", " ").strip()
-                                if len(snippet) < 40:
+                                fp = sub_meta[i][0]
+                                fname = sub_meta[i][1]
+                                chunk_text = sub_meta[i][2] if len(sub_meta[i]) > 2 else ""
+                                if len(chunk_text.strip()) < 40:
                                     continue
-                                results.append((
-                                    sub_meta[i][0], sub_meta[i][1],
-                                    "CPU-FALLBACK",
-                                    datetime.utcnow().date().isoformat(),
-                                    snippet[:300],
-                                    "General",
-                                    "Unclassified",
-                                    0
-                                ))
+                                if fp not in grouped:
+                                    grouped[fp] = (fname, chunk_text)
                             except Exception:
                                 continue
+
+                        for fp, (fname, text_block) in grouped.items():
+                            detected_date = self._extract_date(text_block)
+                            category = self._infer_category(text_block)
+                            crime = self._infer_crime(text_block, category)
+                            summary = self._summarize_text(text_block)
+                            severity = self._severity_score(text_block, category)
+                            if not summary:
+                                continue
+                            results.append((
+                                fp,
+                                fname,
+                                "CPU-HEURISTIC",
+                                detected_date,
+                                summary,
+                                category,
+                                crime,
+                                severity,
+                            ))
 
                     if results:
                         # Save incrementally per chunk to free memory earlier
