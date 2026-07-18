@@ -22,3 +22,7 @@ models/
 .DS_Store
 Thumbs.db
 .github/copilot-instructions.md
+
+# MemPalace per-project files (issue #185)
+mempalace.yaml
+entities.json
